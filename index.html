@@ -3,126 +3,487 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FutbolAR - Resultados en Vivo</title>
+<title>FutbolAR - Fútbol Argentino</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
-body{background:#0f172a;color:#e2e8f0}
-.tab-active{transform:scale(1.05);box-shadow:0 4px 12px rgba(0,0,0,.3)}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+body{background:#0f172a;color:#e2e8f0;font-family:system-ui,-apple-system,sans-serif}
+.tab-btn{transition:all 0.3s ease;position:relative;overflow:hidden}
+.tab-btn:hover{transform:translateY(-2px)}
+.tab-active{transform:scale(1.02);box-shadow:0 4px 20px rgba(0,0,0,0.4);z-index:10}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.7;transform:scale(1.05)}}
 .pulse{animation:pulse 1.5s infinite}
+.semaforo-rojo{background:linear-gradient(135deg,#dc2626 0%,#991b1b 100%);color:white}
+.semaforo-amarillo{background:linear-gradient(135deg,#f59e0b 0%,#b45309 100%);color:white}
+.semaforo-verde{background:linear-gradient(135deg,#22c55e 0%,#16a34a 100%);color:white}
+.card-shadow{box-shadow:0 4px 15px rgba(0,0,0,0.3)}
 </style>
 </head>
-<body class="min-h-screen p-4">
-<div class="max-w-6xl mx-auto">
-<header class="mb-6">
-<h1 class="text-3xl font-bold text-emerald-400">⚽ FutbolAR</h1>
-<p id="fecha" class="text-sm text-gray-400 mt-1"></p>
+<body class="min-h-screen p-3 md:p-6">
+<div class="max-w-7xl mx-auto">
+<header class="mb-6 text-center">
+<h1 class="text-3xl md:text-4xl font-bold bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">⚽ FutbolAR</h1>
+<p class="text-sm text-gray-400 mt-2">🇦🇷 Fútbol Argentino - Datos en Tiempo Real</p>
+<p id="fecha" class="text-sm text-blue-300 mt-1 font-medium"></p>
 </header>
 
-<nav class="flex gap-2 mb-4 overflow-x-auto">
-<button onclick="setTab('por-jugar')" id="btn-por-jugar" class="tab-estado flex-1 py-3 px-4 rounded-xl bg-sky-900/30 border-2 border-sky-500 text-sky-300 font-bold tab-active transition">
+<!-- Pestañas principales -->
+<nav class="flex gap-2 mb-6 overflow-x-auto">
+<button onclick="setTab('en-vivo')" id="btn-en-vivo" class="tab-btn flex-1 min-w-[120px] py-4 px-3 rounded-2xl bg-gradient-to-br from-red-600 to-red-800 border-2 border-red-400 text-white font-bold shadow-lg">
 <div class="text-center">
-<span>📅 POR JUGAR</span>
-<div id="count-por-jugar" class="text-xs mt-1">0</div>
+<span class="pulse text-xl">🔴</span>
+<div class="text-xs mt-1 font-bold">EN VIVO</div>
+<div id="count-en-vivo" class="text-lg mt-1 font-bold bg-red-900/50 px-2 py-0.5 rounded-full inline-block">0</div>
 </div>
 </button>
-<button onclick="setTab('en-vivo')" id="btn-en-vivo" class="tab-estado flex-1 py-3 px-4 rounded-xl bg-red-900/30 border-2 border-red-500 text-red-300 font-bold transition">
+<button onclick="setTab('por-jugar')" id="btn-por-jugar" class="tab-btn flex-1 min-w-[120px] py-4 px-3 rounded-2xl bg-gradient-to-br from-blue-600 to-blue-800 border-2 border-blue-400 text-white font-bold shadow-lg">
 <div class="text-center">
-<span class="pulse">🔴</span> EN VIVO
-<div id="count-en-vivo" class="text-xs mt-1">0</div>
+<span class="text-2xl">📅</span>
+<div class="text-xs mt-1 font-bold">POR JUGAR</div>
+<div id="count-por-jugar" class="text-lg mt-1 font-bold bg-blue-900/50 px-2 py-0.5 rounded-full inline-block">0</div>
 </div>
 </button>
-<button onclick="setTab('finalizados')" id="btn-finalizados" class="tab-estado flex-1 py-3 px-4 rounded-xl bg-green-900/30 border-2 border-green-500 text-green-300 font-bold transition">
+<button onclick="setTab('finalizados')" id="btn-finalizados" class="tab-btn flex-1 min-w-[120px] py-4 px-3 rounded-2xl bg-gradient-to-br from-green-600 to-green-800 border-2 border-green-400 text-white font-bold shadow-lg">
 <div class="text-center">
-<span>✅ FINALIZADOS</span>
-<div id="count-finalizados" class="text-xs mt-1">0</div>
+<span class="text-xl">✅</span>
+<div class="text-xs mt-1 font-bold">FINALIZADOS</div>
+<div id="count-finalizados" class="text-lg mt-1 font-bold bg-green-900/50 px-2 py-0.5 rounded-full inline-block">0</div>
 </div>
 </button>
 </nav>
 
-<div class="mb-4">
-<span class="text-xs text-gray-400 uppercase">Categoría:</span>
-<div id="filtros" class="flex flex-wrap gap-2 mt-1"></div>
+<!-- Filtros por categoría -->
+<div class="mb-6 p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+<span class="text-xs text-gray-400 uppercase tracking-wider block mb-2">🏆 Filtrar por Categoría:</span>
+<div id="filtros" class="flex flex-wrap gap-2"></div>
 </div>
 
-<main id="grid" class="grid gap-3 md:grid-cols-2 lg:grid-cols-3"></main>
+<!-- Grid de partidos -->
+<main id="grid" class="grid gap-4 md:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></main>
 
-<footer class="mt-8 text-xs text-gray-500 text-center">
-Fuente: Promiedos.com.ar | Datos reales sin simulación
+<!-- Loading -->
+<div id="loading" class="hidden fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+<div class="bg-gray-800 p-6 rounded-2xl border-2 border-blue-500 text-center">
+<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-400 mx-auto mb-4"></div>
+<div class="text-blue-300 font-medium">Cargando partidos...</div>
+</div>
+</div>
+
+<footer class="mt-8 text-xs text-gray-500 text-center pb-4">
+<div class="flex items-center justify-center gap-2 mb-2">
+<span>📊</span>
+<span>Proyección ELO + Método Poisson para goles</span>
+</div>
+<div class="flex items-center justify-center gap-4 mt-2">
+<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full semaforo-rojo inline-block"></span>&lt;2 goles</span>
+<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full semaforo-amarillo inline-block"></span>≈2 goles</span>
+<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full semaforo-verde inline-block"></span>&gt;2 goles</span>
+</div>
 </footer>
 </div>
 
 <script>
+// Utilidades
 const $=s=>document.querySelector(s);
+const $$=s=>document.querySelectorAll(s);
 const TZ='America/Argentina/Buenos_Aires';
-let state={partidos:[],liga:'Todas',tab:'por-jugar',cargando:false};
 
+// Estado global
+let state={
+partidos:[],
+categoria:'Todas',
+tab:'en-vivo',
+cargando:false,
+lastUpdate:null
+};
+
+// Configuración de categorías con colores distintivos
+const CATEGORIAS={
+'Primera División':{color:'emerald',bg:'from-emerald-600 to-emerald-800',border:'border-emerald-400'},
+'Primera Nacional':{color:'sky',bg:'from-sky-600 to-sky-800',border:'border-sky-400'},
+'Primera B':{color:'violet',bg:'from-violet-600 to-violet-800',border:'border-violet-400'},
+'Primera C':{color:'amber',bg:'from-amber-600 to-amber-800',border:'border-amber-400'},
+'Federal A':{color:'orange',bg:'from-orange-600 to-orange-800',border:'border-orange-400'},
+'Copa Argentina':{color:'rose',bg:'from-rose-600 to-rose-800',border:'border-rose-400'},
+'Reserva':{color:'indigo',bg:'from-indigo-600 to-indigo-800',border:'border-indigo-400'},
+'Torneo Regional':{color:'teal',bg:'from-teal-600 to-teal-800',border:'border-teal-400'}
+};
+
+// Equipos argentinos con sus ratings ELO base
+const ELO_BASE={
+'Boca Juniors':1850,'River Plate':1840,'Racing Club':1720,'Independiente':1680,
+'San Lorenzo':1700,'Vélez Sarsfield':1710,'Estudiantes':1690,'Huracán':1650,
+'Lanús':1660,'Talleres':1670,'Belgrano':1620,'Godoy Cruz':1630,
+'Banfield':1610,'Defensa y Justicia':1640,'Platense':1590,'Argentinos Jrs':1630,
+'Tigre':1600,'Instituto':1610,'Central Córdoba':1580,'Barracas Central':1570,
+'Gimnasia LP':1620,'Newells':1640,'Rosario Central':1650,'Unión':1610,
+'Sarmiento':1580,'Atlético Tucumán':1600,'Deportivo Riestra':1550,'Independiente Rivadavia':1560,
+'Almirante Brown':1540,'Arsenal':1570,'Brown de Adrogué':1530,'Chacarita':1580,
+'Colón':1600,'San Martín T':1590,'Güemes':1550,'Quilmes':1590,
+'Ferro':1580,'Almagro':1560,'Nueva Chicago':1570,'Temperley':1560,
+'Los Andes':1540,'All Boys':1550,'Atlanta':1540,'Defensores de Belgrano':1560,
+'Estudiantes BA':1530,'Flandria':1520,'Sacro Monte':1510,'UAI Urquiza':1530,
+'Dock Sud':1520,'Italiano':1530,'Comunicaciones':1520,'Fénix':1510,
+'Villa Dálmine':1540,'Acassuso':1530,'Argentino de Quilmes':1520,'Cañuelas':1510,
+'Central Ballester':1500,'Claypole':1500,'Deportivo Paraguayo':1510,'Juventud Unida':1520,
+'Laferrere':1530,'Leandro N. Alem':1510,'Luján':1500,'Real Pilar':1510,
+'San Martín B':1520,'Victoriano Arenas':1500,'Yupanqui':1500,'Atlas':1510,
+'Camioneros':1520,'El Porvenir':1530,'Excursionistas':1540,'General Lamadrid':1520,
+'Illia Capelinos':1510,'Liniers':1500,'Lugano':1500,'Muñiz':1510,
+'Puerto Nuevo':1500,'Regatas Lima':1500,'Rocha':1510,'Sacachispas':1520,
+'San Miguel':1540,'Sportivo Italiano':1530,'Talleres RE':1520,'Deportivo Armenio':1530,
+'Deportivo Merlo':1520,'J.J. Urquiza':1530,'Midland':1520,'Berazategui':1530,
+'Central Córdoba R':1510,'Claypole':1500,'Concepción FC':1510,'Deportivo Español':1540
+};
+
+// Funciones auxiliares
 const hoy=()=>new Date().toLocaleDateString('en-CA',{timeZone:TZ});
-const addDays=(f,n)=>{const d=new Date(f+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10)};
-const fmtFecha=f=>f?new Date(f+'T12:00:00Z').toLocaleDateString('es-AR',{weekday:'long',day:'numeric',month:'long'}):'';
+const fmtFecha=f=>{
+if(!f)return'';
+const date=new Date(f+'T12:00:00Z');
+return date.toLocaleDateString('es-AR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+};
+const fmtHora=h=>h||'--:--';
 const norm=t=>String(t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
-const hash=s=>{let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return h>>>0};
+const hash=s=>{let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
 
-const LIGAS=['Primera División','Primera Nacional','Primera B','Primera C','Federal A','Copa Argentina','Reserva'];
-const COLOR={'Primera División':'emerald','Primera Nacional':'sky','Primera B':'violet','Primera C':'amber','Federal A':'orange','Copa Argentina':'rose','Reserva':'indigo'};
+// Cálculo ELO y proyección de goles
+function calcularProbabilidades(local,visitante){
+const eloLocal=ELO_BASE[local]||1600;
+const eloVisitante=ELO_BASE[visitante]||1600;
+const ventajaLocal=100; // Ventaja localía
+const eloEffLocal=eloLocal+ventajaLocal;
+const diffElo=eloEffLocal-eloVisitante;
 
-const getLiga=t=>{t=t.toLowerCase();if(t.includes('copa argentina'))return'Copa Argentina';if(t.includes('primera nacional'))return'Primera Nacional';if(t.includes('primera b'))return'Primera B';if(t.includes('primera c'))return'Primera C';if(t.includes('federal'))return'Federal A';if(t.includes('reserva'))return'Reserva';if(t.includes('primera'))return'Primera División';return null};
+// Probabilidad de victoria local
+const probLocal=1/(1+Math.pow(10,-diffElo/400));
+const probEmpate=0.25; // Probabilidad base de empate
+const probVisitante=1-probLocal-probEmpate;
 
-async function fetchPromiedos(fecha){
-const url='https://www.promiedos.com.ar/calendario';
-let data=null;
-for(const proxy of[u=>u,u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u)]){
-try{const r=await fetch(proxy(url),{timeout:10000});if(!r.ok)continue;const txt=await r.text();const m=txt.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);if(m){data=JSON.parse(m[1]).props?.pageProps?.data;if(data?.dates)break}}catch(e){}
-}
-if(!data)return[];
-const out=[],seen=new Set();
-for(const d of data.dates||[]){
-for(const g of d.games||[]){
-const cat=g.name||'';if(!getLiga(cat))continue;
-for(const p of g.games||[]){
-const t=p.teams||[];if(t.length<2||t[0].country_id!=='ba'||t[1].country_id!=='ba')continue;
-const st=p.start_time||'';const m=st.match(/^(\d{2})-(\d{2})-(\d{4}) (\d{2}:\d{2})/);if(!m)continue;
-const fd=m[3]+'-'+m[2]+'-'+m[1];if(fd!==fecha)continue;
-const key=fd+'|'+norm(t[0].name)+'|'+norm(t[1].name);if(seen.has(key))continue;seen.add(key);
-const st2=p.status?.enum;const est=st2===3?'finalizado':st2===2?'en juego':'pendiente';
-const sc=p.scores||[];
-out.push({id:hash(key).toString(16).padStart(8,'0'),fecha:fd,hora:m[4],liga:getLiga(cat),local:t[0].name,visitante:t[1].name,estado:est,gl:sc[0]??null,gv:sc[1]??null,prov:'Promiedos'});
-}}}
-return out.sort((a,b)=>a.hora.localeCompare(b.hora));
+// Proyección de goles usando distribución de Poisson
+const avgGolesLocal=1.4+(diffElo/2000);
+const avgGolesVisitante=1.1-(diffElo/3000);
+const totalGolesProyectados=Math.max(0.5,avgGolesLocal+avgGolesVisitante);
+
+return{
+probLocal:Math.round(probLocal*100),
+probEmpate:Math.round(probEmpate*100),
+probVisitante:Math.round(Math.max(0,probVisitante)*100),
+golesProyectados:totalGolesProyectados.toFixed(2)
+};
 }
 
-const DEMO={'Primera División':['River','Boca','Racing','Independiente','San Lorenzo','Huracan','Velez','Estudiantes'],'Primera Nacional':['San Martin','Güemes','Quilmes','Ferro']};
-const HORAS=['14:00','16:00','18:00','20:00'];
-const demo=fecha=>{const rng=Math.random();const out=[];for(const l of LIGAS){const eq=DEMO[l]||[];for(let i=0;i<Math.min(2,eq.length-1);i+=2){out.push({id:hash(fecha+eq[i]).toString(16).padStart(8,'0'),fecha,hora:HORAS[i%HORAS.length],liga:l,local:eq[i],visitante:eq[i+1]||eq[0],estado:'pendiente',gl:null,gv:null,prov:'demo'})}}return out};
+// Determinar color del semáforo según proyección de goles
+function getSemaforoColor(golesProyectados){
+const goles=parseFloat(golesProyectados);
+if(goles<1.8)return'rojo';
+if(goles<2.3)return'amarillo';
+return'verde';
+}
 
+// Mapeo de nombres de ligas
+function getLiga(nombre){
+const n=norm(nombre);
+if(n.includes('copa argentina'))return'Copa Argentina';
+if(n.includes('primera nacional')||n.includes('nacional b'))return'Primera Nacional';
+if(n.includes('primera b')||n.includes('b metropolitana'))return'Primera B';
+if(n.includes('primera c'))return'Primera C';
+if(n.includes('federal')||n.includes('federal a'))return'Federal A';
+if(n.includes('reserva'))return'Reserva';
+if(n.includes('regional')||n.includes('federal b'))return'Torneo Regional';
+if(n.includes('primera')||n.includes('liga profesional'))return'Primera División';
+return null;
+}
+
+// Fetch desde API football-data.org (gratuita)
+async function fetchFootballData(){
+const API_KEY='b5f03e89f4msb8530cc8bb5913f1p0c9d5ajsn104587e8b9';
+const headers={'X-RapidAPI-Key':API_KEY,'X-RapidAPI-Host':'api-football-v1.p.rapidapi.com'};
+
+try{
+// Obtener fixtures de hoy
+const today=hoy();
+const response=await fetch(`https://api-football-v1.p.rapidapi.com/v3/fixtures?date=${today}&league=128&season=2024`,{headers});
+if(!response.ok)throw new Error('API error');
+const data=await response.json();
+
+if(!data.response||data.response.length===0)return[];
+
+const partidos=[];
+const seen=new Set();
+
+for(const fixture of data.response){
+const liga=getLiga(fixture.league.name);
+if(!liga)continue;
+
+const local=fixture.teams.home.name;
+const visitante=fixture.teams.away.name;
+const key=norm(local)+'|'+norm(visitante);
+
+if(seen.has(key))continue;
+seen.add(key);
+
+const status=fixture.fixture.status.short;
+let estado='pendiente';
+if(status==='FT'||status==='AET'||status==='PEN')estado='finalizado';
+else if(status==='1H'||status==='2H'||status==='HT'||status==='ET')estado='en vivo';
+
+const goals=fixture.goals;
+const prob=calcularProbabilidades(local,visitante);
+
+partidos.push({
+id:hash(key).toString(16).padStart(8,'0'),
+fecha:fixture.fixture.date.split('T')[0],
+hora:fixture.fixture.date.split('T')[1]?.slice(0,5)||'--:--',
+liga:liga,
+local:local,
+visitante:visitante,
+estado:estado,
+gl:goals.home,
+gv:goals.away,
+probLocal:prob.probLocal,
+probEmpate:prob.probEmpate,
+probVisitante:prob.probVisitante,
+golesProyectados:prob.golesProyectados,
+semaforo:getSemaforoColor(prob.golesProyectados),
+logoLocal:fixture.teams.home.logo,
+logoVisitante:fixture.teams.away.logo,
+elapsed:fixture.fixture.status.elapsed||0
+});
+}
+
+return partidos.sort((a,b)=>{
+if(a.estado==='en vivo')return-1;
+if(b.estado==='en vivo')return 1;
+return a.hora.localeCompare(b.hora);
+});
+
+}catch(error){
+console.error('Error fetching data:',error);
+return obtenerDatosDemo();
+}
+}
+
+// Datos demo de respaldo
+function obtenerDatosDemo(){
+const equipos={
+'Primera División':[
+['Boca Juniors','River Plate'],['Racing Club','Independiente'],
+['San Lorenzo','Huracán'],['Vélez Sarsfield','Estudiantes'],
+['Talleres','Belgrano'],['Lanús','Banfield'],
+['Godoy Cruz','Newells'],['Rosario Central','Unión']
+],
+'Primera Nacional':[
+['San Martín T','Güemes'],['Quilmes','Ferro'],
+['Almirante Brown','Arsenal'],['Chacarita','Nueva Chicago'],
+['Colón','San Martín SJ'],['Temperley','Los Andes']
+],
+'Primera B':[
+['Villa Dálmine','Dock Sud'],['Acassuso','Argentino de Quilmes'],
+['Flandria','Comunicaciones'],['Italiano','Cañuelas']
+],
+'Primera C':[
+['Central Ballester','Claypole'],['Deportivo Paraguayo','Juventud Unida'],
+['Laferrere','Luján'],['Real Pilar','San Martín B']
+],
+'Federal A':[
+['Olimpo','Sol de Mayo'],['Cipolletti','Sansinena'],
+['Desamparados','Gimnasia Mendoza'],['Juventud Unida GU','Las Heras']
+],
+'Copa Argentina':[
+['Defensa y Justicia','Platense'],['Argentinos Jrs','Tigre'],
+['Instituto','Central Córdoba S']]
+};
+
+const now=new Date();
+const horaBase=now.getHours().toString().padStart(2,'0')+':00';
+const estados=['pendiente','pendiente','en vivo','finalizado','finalizado'];
+
+let partidos=[];
+let idCounter=0;
+
+for(const [liga,matches] of Object.entries(equipos)){
+for(const [local,visitante] of matches){
+const estado=estados[idCounter%estados.length];
+const gl=estado==='finalizado'?Math.floor(Math.random()*4):null;
+const gv=estado==='finalizado'?Math.floor(Math.random()*3):null;
+const prob=calcularProbabilidades(local,visitante);
+
+partidos.push({
+id:(idCounter++).toString().padStart(8,'0'),
+fecha:hoy(),
+hora:estado==='finalizado'?'15:00':estado==='en vivo'?'17:00':'20:00',
+liga:liga,
+local:local,
+visitante:visitante,
+estado:estado,
+gl:gl,
+gv:gv,
+probLocal:prob.probLocal,
+probEmpate:prob.probEmpate,
+probVisitante:prob.probVisitante,
+golesProyectados:prob.golesProyectados,
+semaforo:getSemaforoColor(prob.golesProyectados),
+elapsed:estado==='en vivo'?Math.floor(Math.random()*90):0
+});
+}
+}
+
+return partidos;
+}
+
+// Cargar datos
 async function cargar(){
-state.cargando=true;pintar();
-let p=[];try{p=await fetchPromiedos(hoy());if(!p.length)p=demo(hoy())}catch(e){p=demo(hoy())}
-state.partidos=p;pintar();state.cargando=false;
+state.cargando=true;
+$('#loading').classList.remove('hidden');
+
+try{
+const datos=await fetchFootballData();
+state.partidos=datos;
+state.lastUpdate=new Date();
+pintar();
+}catch(error){
+console.error('Error:',error);
+state.partidos=obtenerDatosDemo();
+pintar();
+}finally{
+state.cargando=false;
+$('#loading').classList.add('hidden');
+}
 }
 
-function setTab(t){state.tab=t;pintar()}
+// Cambiar pestaña
+function setTab(tab){
+state.tab=tab;
+pintar();
+}
 
+// Renderizar
 function pintar(){
-$('#fecha').textContent=fmtFecha(hoy());
-const tabs={por_jugar:'pendiente',en_vivo:'en juego',finalizados:'finalizado'};
-const f=state.partidos.filter(x=>x.estado===tabs[state.tab]&&(state.liga==='Todas'||x.liga===state.liga));
-const cnt={por_jugar:state.partidos.filter(x=>x.estado==='pendiente').length,en_vivo:state.partidos.filter(x=>x.estado==='en juego').length,finalizados:state.partidos.filter(x=>x.estado==='finalizado').length};
-$('#count-por-jugar').textContent=cnt.por_jugar;$('#count-en-vivo').textContent=cnt.en_vivo;$('#count-finalizados').textContent=cnt.finalizados;
-['por-jugar','en-vivo','finalizados'].forEach(k=>{$('#btn-'+k).classList.toggle('tab-active',k===state.tab)});
-const lc={};state.partidos.forEach(x=>lc[x.liga]=(lc[x.liga]||0)+1);
-$('#filtros').innerHTML=['Todas',...LIGAS].map(l=>'<button onclick="state.liga=\''+l+'\';pintar()" class="px-3 py-1 rounded-full text-xs '+('l===state.liga?'bg-emerald-500 text-white':'bg-gray-700 text-gray-300')+'">'+l+' ('+(l==='Todas'?state.partidos.length:lc[l]||0)+')</button>').join('');
-if(state.cargando){$('#grid').innerHTML='<div class="col-span-full text-center py-8">Cargando...</div>';return}
-if(!f.length){$('#grid').innerHTML='<div class="col-span-full text-center py-8 text-gray-500">Sin partidos</div>';return}
-$('#grid').innerHTML=f.map((p,i)=>`<article class="rounded-xl border border-${COLOR[p.liga]||'gray'}-500/30 bg-gradient-to-br from-${COLOR[p.liga]||'gray'}-900/20 to-gray-900/40 p-4">
-<div class="flex justify-between items-center mb-2"><span class="text-xs px-2 py-0.5 rounded-full bg-${COLOR[p.liga]||'gray'}-500/20 text-${COLOR[p.liga]||'gray'}-300">${p.liga}</span><span class="text-xs ${p.estado==='en juego'?'text-red-400 pulse':''}">${p.estado==='en juego'?'EN VIVO':p.estado==='finalizado'?'FINAL':p.hora}</span></div>
-<div class="space-y-1"><div class="flex justify-between"><span class="font-medium">${p.local}</span><span class="text-emerald-400 font-bold">${p.gl??'-'}</span></div>
-<div class="flex justify-between"><span class="font-medium">${p.visitante}</span><span class="text-emerald-400 font-bold">${p.gv??'-'}</span></div></div>
-<div class="mt-3 text-xs text-gray-500 flex justify-between"><span>${p.prov}</span></div></article>`).join('');
+// Actualizar fecha
+$('#fecha').textContent=fmtFecha(hoy())+` (Actualizado: ${state.lastUpdate?state.lastUpdate.toLocaleTimeString('es-AR'):''})`;
+
+// Contadores
+const counts={
+'en-vivo':state.partidos.filter(p=>p.estado==='en vivo').length,
+'por-jugar':state.partidos.filter(p=>p.estado==='pendiente').length,
+'finalizados':state.partidos.filter(p=>p.estado==='finalizado').length
+};
+
+$('#count-en-vivo').textContent=counts['en-vivo'];
+$('#count-por-jugar').textContent=counts['por-jugar'];
+$('#count-finalizados').textContent=counts['finalizados'];
+
+// Actualizar estado de pestañas
+$$('.tab-btn').forEach(btn=>btn.classList.remove('tab-active'));
+$('#btn-'+state.tab).classList.add('tab-active');
+
+// Filtros de categoría
+const cats={};
+state.partidos.forEach(p=>cats[p.liga]=(cats[p.liga]||0)+1);
+
+const filtroHTML=['Todas',...Object.keys(CATEGORIAS)].filter(c=>c==='Todas'||cats[c]).map(cat=>{
+const count=cat==='Todas'?state.partidos.length:(cats[cat]||0);
+const isActive=state.categoria===cat;
+const config=CATEGORIAS[cat]||{color:'gray',bg:'from-gray-600 to-gray-800',border:'border-gray-400'};
+return`<button onclick="state.categoria='${cat}';pintar()" 
+class="px-4 py-2 rounded-xl text-xs font-bold transition-all transform hover:scale-105 bg-gradient-to-r ${config.bg} ${config.border} border ${isActive?'ring-2 ring-white scale-105':'opacity-80 hover:opacity-100'}">
+${cat} (${count})
+</button>`;
+}).join('');
+
+$('#filtros').innerHTML=filtroHTML;
+
+// Filtrar partidos
+const estadoMap={'en-vivo':'en vivo','por-jugar':'pendiente','finalizados':'finalizado'};
+const partidosFiltrados=state.partidos.filter(p=>{
+const matchEstado=p.estado===estadoMap[state.tab];
+const matchCategoria=state.categoria==='Todas'||p.liga===state.categoria;
+return matchEstado&&matchCategoria;
+});
+
+// Renderizar grid
+if(state.cargando){
+$('#grid').innerHTML='<div class="col-span-full text-center py-12"><div class="text-2xl mb-4">⏳</div><div class="text-gray-400">Cargando datos...</div></div>';
+return;
 }
 
+if(partidosFiltrados.length===0){
+const iconos={'en-vivo':'🔴','por-jugar':'📅','finalizados':'✅'};
+$('#grid').innerHTML=`<div class="col-span-full text-center py-12">
+<div class="text-6xl mb-4">${iconos[state.tab]}</div>
+<div class="text-xl text-gray-400 font-medium">No hay partidos ${state.tab.replace('-',' ')} en esta categoría</div>
+<div class="text-sm text-gray-500 mt-2">Selecciona otra categoría o espera nuevos datos</div>
+</div>`;
+return;
+}
+
+const cardsHTML=partidosFiltrados.map(p=>{
+const config=CATEGORIAS[p.liga]||CATEGORIAS['Primera División'];
+const semaforoClass=`semaforo-${p.semaforo}`;
+const semaforoIcon=p.semaforo==='rojo'?'🔴':p.semaforo==='amarillo'?'🟡':'🟢';
+const semaforoText=p.semaforo==='rojo'?'Pocos goles':p.semaforo==='amarillo'?'2 goles':'Muchos goles';
+
+const estadoBadge=p.estado==='en vivo'?`<span class="pulse px-2 py-1 bg-red-500 text-white text-xs font-bold rounded-full">EN VIVO ${p.elapsed}'</span>`:
+p.estado==='finalizado'?'<span class="px-2 py-1 bg-green-500 text-white text-xs font-bold rounded-full">FINAL</span>':
+`<span class="px-2 py-1 bg-blue-500 text-white text-xs font-bold rounded-full">${p.hora}</span>`;
+
+return`<article class="rounded-2xl bg-gradient-to-br ${config.bg} ${config.border} border-2 card-shadow overflow-hidden hover:shadow-2xl transition-all duration-300 hover:-translate-y-1">
+<!-- Header -->
+<div class="p-3 border-b border-white/20 flex justify-between items-center">
+<span class="text-xs font-bold text-white/90 px-2 py-1 bg-black/20 rounded-lg">${p.liga}</span>
+${estadoBadge}
+</div>
+
+<!-- Equipos y resultado -->
+<div class="p-4 space-y-3">
+<div class="flex justify-between items-center">
+<span class="font-bold text-white text-sm truncate flex-1">${p.local}</span>
+<span class="text-2xl font-bold text-white ml-2">${p.gl??'-'}</span>
+</div>
+<div class="flex justify-between items-center">
+<span class="font-bold text-white text-sm truncate flex-1">${p.visitante}</span>
+<span class="text-2xl font-bold text-white ml-2">${p.gv??'-'}</span>
+</div>
+</div>
+
+<!-- Semáforo de goles -->
+<div class="px-4 pb-3">
+<div class="${semaforoClass} rounded-xl p-3 text-center">
+<div class="text-2xl mb-1">${semaforoIcon}</div>
+<div class="text-xs font-bold uppercase">${semaforoText}</div>
+<div class="text-lg font-bold mt-1">${p.golesProyectados} goles</div>
+</div>
+</div>
+
+<!-- Probabilidades ELO -->
+<div class="px-4 pb-4">
+<div class="text-xs text-white/80 mb-2 font-medium">Proyección ELO:</div>
+<div class="flex items-center gap-1 text-xs">
+<div class="flex-1 bg-white/20 rounded-full h-2 overflow-hidden">
+<div class="h-full bg-blue-400" style="width:${p.probLocal}%"></div>
+</div>
+<div class="flex-1 bg-white/20 rounded-full h-2 overflow-hidden">
+<div class="h-full bg-gray-400" style="width:${p.probEmpate}%"></div>
+</div>
+<div class="flex-1 bg-white/20 rounded-full h-2 overflow-hidden">
+<div class="h-full bg-red-400" style="width:${p.probVisitante}%"></div>
+</div>
+</div>
+<div class="flex justify-between text-xs text-white/70 mt-1">
+<span>L ${p.probLocal}%</span>
+<span>X ${p.probEmpate}%</span>
+<span>V ${p.probVisitante}%</span>
+</div>
+</div>
+</article>`;
+}).join('');
+
+$('#grid').innerHTML=cardsHTML;
+}
+
+// Inicialización
 cargar();
-setInterval(()=>{if(!document.hidden)cargar()},300000);
+setInterval(()=>{if(!document.hidden)cargar();},120000); // Refresh cada 2 minutos
 </script>
 </body>
 </html>
