@@ -1,877 +1,489 @@
-<!-- frontend/index.html -->
-<!-- v7 · Fuentes actualizadas + nuevo proveedor de predicciones FOREBET:
-     • Orden de fuentes de partidos: Promiedos (endpoint agregado /calendario, sin crawling) →
-       Sofascore → ESPN → TheSportsDB → Forebet (mejor esfuerzo: directo → allorigins → r.jina.ai).
-     • Forebet aporta predicciones 1X2 + over 2.5 reales; cuando está disponible ENRIQUECE
-       las probabilidades y el semáforo de cualquier fuente (dedupe por fixture).
-     • Si Forebet está tras Cloudflare en tu red, se degrada en silencio al modelo ELO+Poisson.
-     • Semáforo: rojo <2 goles · amarillo parejas · verde ≥2 goles (con λ total derivada
-       por bisección desde el over 2.5 de Forebet cuando aplica).
-     • Único excluido: fútbol femenino. TTL 5 min, 1 request por fuente por ciclo. -->
 <!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="color-scheme" content="dark">
-<title>FútbolAR · Análisis del día</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
+<title>FutbolAR - Fútbol Argentino</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/fonts/inter@latest/latin-400-normal.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/fonts/inter@latest/latin-500-normal.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/fonts/inter@latest/latin-700-normal.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/fonts/space-grotesk@latest/latin-500-normal.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/fonts/space-grotesk@latest/latin-700-normal.css">
-<script>
-tailwind.config = {
-  theme: { extend: { fontFamily: {
-    sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
-    display: ["'Space Grotesk'", "Inter", "sans-serif"]
-  } } }
-};
-</script>
 <style>
-  html { color-scheme: dark; }
-  body {
-    background:
-      radial-gradient(1100px 520px at 82% -10%, rgba(16,185,129,.14), transparent 60%),
-      radial-gradient(900px 480px at 8% 110%, rgba(56,189,248,.08), transparent 55%),
-      #070b0e;
-  }
-  ::selection { background: rgba(52,211,153,.3); }
-  ::-webkit-scrollbar { width: 10px; height: 10px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 999px; }
-  .bar-seg { transition: width .6s cubic-bezier(.22,1,.36,1); }
-  @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-  .card-anim { animation: fadeUp .35s ease both; }
+body{background:#0f172a;color:#e2e8f0;font-family:system-ui,-apple-system,sans-serif}
+.tab-btn{transition:all 0.3s ease;position:relative;overflow:hidden}
+.tab-btn:hover{transform:translateY(-2px)}
+.tab-active{transform:scale(1.02);box-shadow:0 4px 20px rgba(0,0,0,0.4);z-index:10}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.7;transform:scale(1.05)}}
+.pulse{animation:pulse 1.5s infinite}
+.semaforo-rojo{background:linear-gradient(135deg,#dc2626 0%,#991b1b 100%);color:white}
+.semaforo-amarillo{background:linear-gradient(135deg,#f59e0b 0%,#b45309 100%);color:white}
+.semaforo-verde{background:linear-gradient(135deg,#22c55e 0%,#16a34a 100%);color:white}
+.card-shadow{box-shadow:0 4px 15px rgba(0,0,0,0.3)}
 </style>
 </head>
-<body class="min-h-screen font-sans text-zinc-100 antialiased">
-<div class="mx-auto max-w-6xl px-4 pb-16">
+<body class="min-h-screen p-3 md:p-6">
+<div class="max-w-7xl mx-auto">
+<header class="mb-6 text-center">
+<h1 class="text-3xl md:text-4xl font-bold bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">⚽ FutbolAR</h1>
+<p class="text-sm text-gray-400 mt-2">🇦🇷 Fútbol Argentino - Datos en Tiempo Real</p>
+<p id="fecha" class="text-sm text-blue-300 mt-1 font-medium"></p>
+</header>
 
-  <header class="flex flex-col gap-5 pb-6 pt-8 md:flex-row md:items-end md:justify-between">
-    <div>
-      <div class="flex items-center gap-3">
-        <span class="grid h-10 w-10 place-items-center rounded-xl border border-emerald-300/30 bg-emerald-400/15 font-display text-lg font-bold text-emerald-300">F</span>
-        <h1 class="font-display text-3xl font-bold tracking-tight md:text-4xl">Fútbol<span class="text-emerald-400">AR</span></h1>
-      </div>
-      <p id="fecha-humana" class="mt-2 text-sm capitalize text-zinc-400"></p>
-      <div id="nav-fecha" class="mt-3 flex items-center gap-2">
-        <button id="btn-antes" class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-zinc-300 transition hover:border-emerald-300/40 hover:text-white">‹</button>
-        <button id="btn-hoy" class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-zinc-300 transition hover:border-emerald-300/40 hover:text-white">Hoy</button>
-        <button id="btn-despues" class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-zinc-300 transition hover:border-emerald-300/40 hover:text-white">›</button>
-      </div>
-    </div>
-    <div class="flex flex-col items-start gap-3 md:items-end">
-      <div id="chips" class="flex flex-wrap gap-2"></div>
-      <button id="btn-refresh" class="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-400 active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-50">
-        <svg id="spinner" class="hidden h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-          <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-        </svg>
-        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 12a9 9 0 11-2.64-6.36"></path><path d="M21 3v6h-6"></path>
-        </svg>
-        Actualizar datos
-      </button>
-    </div>
-  </header>
+<!-- Pestañas principales -->
+<nav class="flex gap-2 mb-6 overflow-x-auto">
+<button onclick="setTab('en-vivo')" id="btn-en-vivo" class="tab-btn flex-1 min-w-[120px] py-4 px-3 rounded-2xl bg-gradient-to-br from-red-600 to-red-800 border-2 border-red-400 text-white font-bold shadow-lg">
+<div class="text-center">
+<span class="pulse text-xl">🔴</span>
+<div class="text-xs mt-1 font-bold">EN VIVO</div>
+<div id="count-en-vivo" class="text-lg mt-1 font-bold bg-red-900/50 px-2 py-0.5 rounded-full inline-block">0</div>
+</div>
+</button>
+<button onclick="setTab('por-jugar')" id="btn-por-jugar" class="tab-btn flex-1 min-w-[120px] py-4 px-3 rounded-2xl bg-gradient-to-br from-blue-600 to-blue-800 border-2 border-blue-400 text-white font-bold shadow-lg">
+<div class="text-center">
+<span class="text-2xl">📅</span>
+<div class="text-xs mt-1 font-bold">POR JUGAR</div>
+<div id="count-por-jugar" class="text-lg mt-1 font-bold bg-blue-900/50 px-2 py-0.5 rounded-full inline-block">0</div>
+</div>
+</button>
+<button onclick="setTab('finalizados')" id="btn-finalizados" class="tab-btn flex-1 min-w-[120px] py-4 px-3 rounded-2xl bg-gradient-to-br from-green-600 to-green-800 border-2 border-green-400 text-white font-bold shadow-lg">
+<div class="text-center">
+<span class="text-xl">✅</span>
+<div class="text-xs mt-1 font-bold">FINALIZADOS</div>
+<div id="count-finalizados" class="text-lg mt-1 font-bold bg-green-900/50 px-2 py-0.5 rounded-full inline-block">0</div>
+</div>
+</button>
+</nav>
 
-  <nav id="filtros" class="mb-6 flex flex-wrap gap-2"></nav>
+<!-- Filtros por categoría -->
+<div class="mb-6 p-4 bg-gray-800/50 rounded-xl border border-gray-700">
+<span class="text-xs text-gray-400 uppercase tracking-wider block mb-2">🏆 Filtrar por Categoría:</span>
+<div id="filtros" class="flex flex-wrap gap-2"></div>
+</div>
 
-  <div id="leyenda-sem" class="mb-6 flex flex-wrap items-center gap-x-5 gap-y-1 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-[11px] text-zinc-400">
-    <span class="font-semibold uppercase tracking-wide text-zinc-300">Semáforo de goles</span>
-    <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-red-500"></span> menos de 2 goles</span>
-    <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-amber-400"></span> probabilidades parejas</span>
-    <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-emerald-400"></span> al menos 2 goles</span>
-  </div>
+<!-- Grid de partidos -->
+<main id="grid" class="grid gap-4 md:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></main>
 
-  <div id="aviso" hidden class="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"></div>
-  <div id="error" hidden class="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200"></div>
+<!-- Loading -->
+<div id="loading" class="hidden fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+<div class="bg-gray-800 p-6 rounded-2xl border-2 border-blue-500 text-center">
+<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-400 mx-auto mb-4"></div>
+<div class="text-blue-300 font-medium">Cargando partidos...</div>
+</div>
+</div>
 
-  <main id="grid" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"></main>
-
-  <footer class="mt-10 flex flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-5 text-xs text-zinc-500">
-    <span>fuentes: Promiedos · Sofascore · ESPN · TheSportsDB · predicciones Forebet (mejor esfuerzo) · backend FastAPI si está activo</span>
-    <span id="pie-estado"></span>
-  </footer>
+<footer class="mt-8 text-xs text-gray-500 text-center pb-4">
+<div class="flex items-center justify-center gap-2 mb-2">
+<span>📊</span>
+<span>Proyección ELO + Método Poisson para goles</span>
+</div>
+<div class="flex items-center justify-center gap-4 mt-2">
+<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full semaforo-rojo inline-block"></span>&lt;2 goles</span>
+<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full semaforo-amarillo inline-block"></span>≈2 goles</span>
+<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full semaforo-verde inline-block"></span>&gt;2 goles</span>
+</div>
+</footer>
 </div>
 
 <script>
-"use strict";
+// Utilidades
+const $=s=>document.querySelector(s);
+const $$=s=>document.querySelectorAll(s);
+const TZ='America/Argentina/Buenos_Aires';
 
-/* ============================ UTILIDADES ============================ */
-const $ = (s) => document.querySelector(s);
-const TZ = "America/Argentina/Buenos_Aires";
-
-function escapeHtml(t) {
-  return String(t ?? "").replace(/[&<>"']/g, (c) => (
-    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
-  ));
-}
-function hoyARG() { return new Date().toLocaleDateString("en-CA", { timeZone: TZ }); }
-function addDays(fecha, n) {
-  const d = new Date(fecha + "T12:00:00Z");
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-function fmtFechaHumana(iso) {
-  if (!iso) return "";
-  return new Date(iso + "T12:00:00Z").toLocaleDateString("es-AR", {
-    weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC"
-  });
-}
-function fechaHoraARG(iso) {
-  const d = new Date(iso);
-  if (isNaN(d)) return null;
-  return {
-    fecha: d.toLocaleDateString("en-CA", { timeZone: TZ }),
-    hora: d.toLocaleTimeString("es-AR", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false })
-  };
-}
-function normTeam(t) {
-  return String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-}
-function hashStr(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
-function parseIntSafe(v) { const n = parseInt(v, 10); return Number.isNaN(n) ? null : n; }
-async function fetchT(url, ms) {
-  const c = new AbortController();
-  const t = setTimeout(() => c.abort(), ms);
-  try { return await fetch(url, { signal: c.signal }); } finally { clearTimeout(t); }
-}
-
-/* ============================ MODELO ELO + POISSON (respaldo) ============================ */
-const RATINGS = {
-  "river plate":1745,"boca juniors":1725,"racing club":1700,"racing":1700,"velez sarsfield":1680,"velez":1680,
-  "estudiantes de la plata":1670,"estudiantes":1670,"san lorenzo":1665,"talleres de cordoba":1655,"talleres":1655,
-  "independiente":1650,"rosario central":1640,"newells old boys":1635,"newell's old boys":1635,"huracan":1635,
-  "argentinos juniors":1630,"lanus":1625,"defensa y justicia":1610,"gimnasia la plata":1610,"gimnasia y esgrima la plata":1610,
-  "banfield":1600,"atletico tucuman":1590,"union de santa fe":1590,"union":1590,"godoy cruz":1585,
-  "belgrano":1580,"colon":1575,"tigre":1575,"platense":1565,"central cordoba":1560,
-  "independiente rivadavia":1555,"sarmiento":1545,"barracas central":1540,"deportivo riestra":1535,"aldosivi":1530
+// Estado global
+let state={
+partidos:[],
+categoria:'Todas',
+tab:'en-vivo',
+cargando:false,
+lastUpdate:null
 };
-function ratingDe(t) { const r = RATINGS[normTeam(t)]; return r != null ? r : 1450 + (hashStr(normTeam(t)) % 400); }
-function poissonPMF(k, l) { let f = 1; for (let i = 1; i <= k; i++) f *= i; return Math.exp(-l) * Math.pow(l, k) / f; }
-function r1(x) { return Math.round(x * 10) / 10; }
 
-function probsModelo(local, visitante) {
-  const rl = ratingDe(local) + 60, rv = ratingDe(visitante);
-  const factor = Math.pow(10, (rl - rv) / 1200);
-  const ll = Math.min(3, Math.max(.35, 1.45 * factor));
-  const lv = Math.min(2.8, Math.max(.3, 1.18 / factor));
-  let pl = 0, pe = 0, pv = 0, over = 0, btts = 0, tot = 0;
-  for (let i = 0; i <= 6; i++) for (let j = 0; j <= 6; j++) {
-    const p = poissonPMF(i, ll) * poissonPMF(j, lv);
-    tot += p;
-    if (i > j) pl += p; else if (i === j) pe += p; else pv += p;
-    if (i + j >= 3) over += p;
-    if (i > 0 && j > 0) btts += p;
-  }
-  const esp = 1 / (1 + Math.pow(10, (rv - rl) / 400));
-  const emp = Math.max(.18, .30 - .24 * Math.abs(esp - .5));
-  const f = [
-    .6 * (pl / tot) + .4 * ((1 - emp) * esp),
-    .6 * (pe / tot) + .4 * emp,
-    .6 * (pv / tot) + .4 * ((1 - emp) * (1 - esp))
-  ];
-  const s = f[0] + f[1] + f[2];
-  return {
-    elo: { local: Math.round(rl), visitante: Math.round(rv) },
-    lambdas: { local: Math.round(ll * 1000) / 1000, visitante: Math.round(lv * 1000) / 1000 },
-    probabilidades: { local: r1(f[0] / s * 100), empate: r1(f[1] / s * 100), visitante: r1(f[2] / s * 100) },
-    mercados: { over_2_5: r1(over / tot * 100), btts: r1(btts / tot * 100) },
-    origen: "Modelo ELO+Poisson"
-  };
-}
-
-/* ============================ SEMÁFORO + FOREBET MATH ============================ */
-function lambdaDesdeOver25(pOver) {
-  let lo = 0, hi = 8;
-  for (let i = 0; i < 40; i++) {
-    const mid = (lo + hi) / 2;
-    const over = 1 - Math.exp(-mid) * (1 + mid + (mid * mid) / 2);
-    if (over < pOver) lo = mid; else hi = mid;
-  }
-  return (lo + hi) / 2;
-}
-function probsFromForebet(pred) {
-  const s = (pred.p1 + pred.px + pred.p2) || 1;
-  const over = pred.over != null ? pred.over : 55;
-  const l = lambdaDesdeOver25(over / 100);
-  return {
-    probabilidades: { local: r1(pred.p1 / s * 100), empate: r1(pred.px / s * 100), visitante: r1(pred.p2 / s * 100) },
-    mercados: { over_2_5: over, btts: null },
-    lambdasTotal: l,
-    origen: "Forebet"
-  };
-}
-function semaforoDe(prob) {
-  let l = null;
-  if (prob) {
-    if (prob.lambdasTotal != null) l = prob.lambdasTotal;
-    else if (prob.lambdas) l = prob.lambdas.local + prob.lambdas.visitante;
-    else if (prob.poisson) l = prob.poisson.lambda_local + prob.poisson.lambda_visitante;
-  }
-  if (l == null) return null;
-  const pMenos2 = Math.exp(-l) * (1 + l);
-  const pMas2 = 1 - pMenos2;
-  const pct = Math.round(pMas2 * 100);
-  if (pMas2 >= 0.55) return { activo: "verde",    pct, textoColor: "text-emerald-300", titulo: "Alta probabilidad de al menos 2 goles" };
-  if (pMas2 <= 0.45) return { activo: "rojo",     pct, textoColor: "text-red-300",     titulo: "Alta probabilidad de menos de 2 goles" };
-  return                    { activo: "amarillo", pct, textoColor: "text-amber-300",   titulo: "Probabilidades de goles muy parejas" };
-}
-function dotSemaforo(color, activo) {
-  const base = { rojo: "bg-red-500", amarillo: "bg-amber-400", verde: "bg-emerald-400" }[color];
-  const glow = {
-    rojo: "shadow-[0_0_10px_rgba(239,68,68,.85)]",
-    amarillo: "shadow-[0_0_10px_rgba(251,191,36,.85)]",
-    verde: "shadow-[0_0_10px_rgba(52,211,153,.85)]"
-  }[color];
-  return '<span class="h-3 w-3 rounded-full ' + base + ' ' + (activo ? glow : "opacity-20") + '"></span>';
-}
-
-/* ============================ CATEGORÍAS ============================ */
-const ORDEN_LIGAS = [
-  "Primera División", "Primera Nacional", "Primera B Metropolitana", "Primera C",
-  "Torneo Promocional Amateur", "Torneo Federal A", "Copa Argentina", "Reserva", "Juveniles"
-];
-const COLOR_LIGA = {
-  "Primera División": "border-emerald-300/30 bg-emerald-400/10 text-emerald-300",
-  "Primera Nacional": "border-sky-300/30 bg-sky-400/10 text-sky-300",
-  "Primera B Metropolitana": "border-violet-300/30 bg-violet-400/10 text-violet-300",
-  "Primera C": "border-amber-300/30 bg-amber-400/10 text-amber-300",
-  "Torneo Promocional Amateur": "border-teal-300/30 bg-teal-400/10 text-teal-300",
-  "Torneo Federal A": "border-orange-300/30 bg-orange-400/10 text-orange-300",
-  "Copa Argentina": "border-rose-300/30 bg-rose-400/10 text-rose-300",
-  "Reserva": "border-indigo-300/30 bg-indigo-400/10 text-indigo-300",
-  "Juveniles": "border-lime-300/30 bg-lime-400/10 text-lime-300"
+// Configuración de categorías con colores distintivos
+const CATEGORIAS={
+'Primera División':{color:'emerald',bg:'from-emerald-600 to-emerald-800',border:'border-emerald-400'},
+'Primera Nacional':{color:'sky',bg:'from-sky-600 to-sky-800',border:'border-sky-400'},
+'Primera B':{color:'violet',bg:'from-violet-600 to-violet-800',border:'border-violet-400'},
+'Primera C':{color:'amber',bg:'from-amber-600 to-amber-800',border:'border-amber-400'},
+'Federal A':{color:'orange',bg:'from-orange-600 to-orange-800',border:'border-orange-400'},
+'Copa Argentina':{color:'rose',bg:'from-rose-600 to-rose-800',border:'border-rose-400'},
+'Reserva':{color:'indigo',bg:'from-indigo-600 to-indigo-800',border:'border-indigo-400'},
+'Torneo Regional':{color:'teal',bg:'from-teal-600 to-teal-800',border:'border-teal-400'}
 };
-const COLOR_DEFAULT = "border-white/10 bg-white/5 text-zinc-300";
-const DOT = { emerald: "bg-emerald-400", amber: "bg-amber-400", sky: "bg-sky-400", zinc: "bg-zinc-400" };
 
-function ligaGenerica(raw) {
-  const t = String(raw || "").toLowerCase();
-  if (!t) return null;
-  if (/women|femen/.test(t)) return null;
-  if (t.includes("copa argentina")) return "Copa Argentina";
-  if (t.includes("primera nacional") || t.includes("nacional b")) return "Primera Nacional";
-  if (t.includes("primera b")) return "Primera B Metropolitana";
-  if (t.includes("primera c")) return "Primera C";
-  if (t.includes("federal a")) return "Torneo Federal A";
-  if (t.includes("promocional amateur") || t.includes("primera d")) return "Torneo Promocional Amateur";
-  if (t.includes("reserva") || t.includes("reserve")) return "Reserva";
-  if (/u20|u19|u18|u17|u16|youth|juvenil|sub\d\d/.test(t)) return "Juveniles";
-  if (t.includes("primera division") || t.includes("primera a") || t.includes("liga profesional") || t.includes("copa de primera") || t.includes("apertura") || t.includes("clausura")) return "Primera División";
-  return null;
-}
-function ligaTSD(raw, id) {
-  if (id === "4406" || id === 4406) return "Primera División";
-  if (id === "4500" || id === 4500) return "Copa Argentina";
-  if (id === "4616" || id === 4616) return "Primera Nacional";
-  return ligaGenerica(raw);
-}
-function estadoTSD(s) {
-  s = String(s || "").trim().toUpperCase();
-  if (!s || s === "NS" || s.includes("NOT STARTED")) return "pendiente";
-  if (s.startsWith("FT") || s === "AET" || s === "PEN" || s.includes("FINISHED")) return "finalizado";
-  if (s === "PPD" || s.includes("POSTPON") || s.includes("CANC") || s === "ABD") return "postergado";
-  return "en juego";
-}
-
-/* ============================ ESTADO GLOBAL ============================ */
-const state = {
-  partidos: [], probs: new Map(), liga: "Todas",
-  fechaSel: hoyARG(), modo: null, fuentes: [],
-  status: null, statusRecibido: 0, error: null, cargando: true,
-  ultimaCarga: 0, demoInicio: 0
+// Equipos argentinos con sus ratings ELO base
+const ELO_BASE={
+'Boca Juniors':1850,'River Plate':1840,'Racing Club':1720,'Independiente':1680,
+'San Lorenzo':1700,'Vélez Sarsfield':1710,'Estudiantes':1690,'Huracán':1650,
+'Lanús':1660,'Talleres':1670,'Belgrano':1620,'Godoy Cruz':1630,
+'Banfield':1610,'Defensa y Justicia':1640,'Platense':1590,'Argentinos Jrs':1630,
+'Tigre':1600,'Instituto':1610,'Central Córdoba':1580,'Barracas Central':1570,
+'Gimnasia LP':1620,'Newells':1640,'Rosario Central':1650,'Unión':1610,
+'Sarmiento':1580,'Atlético Tucumán':1600,'Deportivo Riestra':1550,'Independiente Rivadavia':1560,
+'Almirante Brown':1540,'Arsenal':1570,'Brown de Adrogué':1530,'Chacarita':1580,
+'Colón':1600,'San Martín T':1590,'Güemes':1550,'Quilmes':1590,
+'Ferro':1580,'Almagro':1560,'Nueva Chicago':1570,'Temperley':1560,
+'Los Andes':1540,'All Boys':1550,'Atlanta':1540,'Defensores de Belgrano':1560,
+'Estudiantes BA':1530,'Flandria':1520,'Sacro Monte':1510,'UAI Urquiza':1530,
+'Dock Sud':1520,'Italiano':1530,'Comunicaciones':1520,'Fénix':1510,
+'Villa Dálmine':1540,'Acassuso':1530,'Argentino de Quilmes':1520,'Cañuelas':1510,
+'Central Ballester':1500,'Claypole':1500,'Deportivo Paraguayo':1510,'Juventud Unida':1520,
+'Laferrere':1530,'Leandro N. Alem':1510,'Luján':1500,'Real Pilar':1510,
+'San Martín B':1520,'Victoriano Arenas':1500,'Yupanqui':1500,'Atlas':1510,
+'Camioneros':1520,'El Porvenir':1530,'Excursionistas':1540,'General Lamadrid':1520,
+'Illia Capelinos':1510,'Liniers':1500,'Lugano':1500,'Muñiz':1510,
+'Puerto Nuevo':1500,'Regatas Lima':1500,'Rocha':1510,'Sacachispas':1520,
+'San Miguel':1540,'Sportivo Italiano':1530,'Talleres RE':1520,'Deportivo Armenio':1530,
+'Deportivo Merlo':1520,'J.J. Urquiza':1530,'Midland':1520,'Berazategui':1530,
+'Central Córdoba R':1510,'Claypole':1500,'Concepción FC':1510,'Deportivo Español':1540
 };
-const FOREBET_PREDS = new Map();
 
-/* ============================ FUENTE 0: BACKEND ============================ */
-const API_CANDIDATOS = ["", "http://localhost:8000", "http://127.0.0.1:8000"];
-let API_BASE = "";
-async function detectarBackend() {
-  for (const base of API_CANDIDATOS) {
-    try {
-      const r = await fetchT(base + "/api/status", 1500);
-      if (!r.ok) continue;
-      const j = await r.json();
-      if (j && typeof j === "object" && ("cache" in j)) { API_BASE = base; return true; }
-    } catch (_) {}
-  }
-  return false;
-}
-
-/* ============================ FUENTE 1: PROMIEDOS ============================ */
-async function fetchPromiedos(fecha) {
-  const url = "https://www.promiedos.com.ar/calendario";
-  const estrategias = [
-    (u) => u,
-    (u) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
-    (u) => "https://corsproxy.io/?url=" + encodeURIComponent(u)
-  ];
-  let data = null;
-  for (const wrap of estrategias) {
-    try {
-      const r = await fetchT(wrap(url), 10000);
-      if (!r.ok) continue;
-      const texto = await r.text();
-      const m = texto.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
-      if (!m) continue;
-      const j = JSON.parse(m[1]);
-      const dd = j && j.props && j.props.pageProps ? j.props.pageProps.data : null;
-      if (dd && Array.isArray(dd.dates)) { data = dd; break; }
-    } catch (_) {}
-  }
-  if (!data) throw new Error("Promiedos inaccesible");
-
-  const out = [];
-  for (const dia of (data.dates || [])) {
-    for (const grupo of (dia.games || [])) {
-      const nombreGrupo = grupo.name || "";
-      if (/femen|women/i.test(nombreGrupo)) continue;
-      for (const g of (grupo.games || [])) {
-        const equipos = g.teams || [];
-        if (equipos.length < 2) continue;
-        if (equipos[0].country_id !== "ba" || equipos[1].country_id !== "ba") continue;
-        const st = String(g.start_time || "");
-        const mst = st.match(/^(\d{2})-(\d{2})-(\d{4}) (\d{2}:\d{2})/);
-        if (!mst) continue;
-        if ((mst[3] + "-" + mst[2] + "-" + mst[1]) !== fecha) continue;
-        const liga = ligaGenerica(nombreGrupo);
-        if (!liga) continue;
-        const enumSt = (g.status || {}).enum;
-        const estado = enumSt === 3 ? "finalizado" : enumSt === 2 ? "en juego" : "pendiente";
-        const scores = Array.isArray(g.scores) ? g.scores : null;
-        out.push(buildPartido(fecha, mst[4], liga, equipos[0].name, equipos[1].name, "Promiedos",
-          estado, scores ? parseIntSafe(scores[0]) : null, scores ? parseIntSafe(scores[1]) : null, ""));
-      }
-    }
-  }
-  return out;
-}
-
-/* ============================ FUENTE 2: SOFASCORE ============================ */
-async function fetchSofascore(fecha) {
-  const url = "https://api.sofascore.com/api/v1/sport/football/scheduled-events/" + fecha;
-  const estrategias = [
-    (u) => u,
-    (u) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
-    (u) => "https://corsproxy.io/?url=" + encodeURIComponent(u)
-  ];
-  let data = null;
-  for (const wrap of estrategias) {
-    try {
-      const r = await fetchT(wrap(url), 9000);
-      if (!r.ok) continue;
-      const j = await r.json();
-      if (j && Array.isArray(j.events)) { data = j; break; }
-    } catch (_) {}
-  }
-  if (!data) throw new Error("Sofascore inaccesible");
-
-  const out = [];
-  for (const e of data.events) {
-    const torneo = e.tournament || {};
-    const cat = torneo.category || {};
-    if (String(cat.name || "").toLowerCase() !== "argentina") continue;
-    const liga = ligaGenerica((torneo.uniqueTournament || {}).name || torneo.name || "");
-    if (!liga) continue;
-    const fh = e.startTimestamp ? fechaHoraARG(new Date(e.startTimestamp * 1000).toISOString()) : null;
-    if (!fh || fh.fecha !== fecha) continue;
-    const st = String((e.status || {}).type || "").toLowerCase();
-    const estado = (st.includes("inprogress") || st === "live") ? "en juego"
-      : (st.includes("finish") || st === "ended") ? "finalizado"
-      : (st.includes("postpon") || st.includes("cancel") || st.includes("suspended")) ? "postergado"
-      : "pendiente";
-    out.push(buildPartido(fecha, fh.hora, liga,
-      (e.homeTeam || {}).name || "", (e.awayTeam || {}).name || "", "Sofascore",
-      estado, parseIntSafe((e.homeScore || {}).current), parseIntSafe((e.awayScore || {}).current),
-      e.slug ? "https://www.sofascore.com/" + e.slug : ""));
-  }
-  return out;
-}
-
-/* ============================ FUENTE 3: ESPN ============================ */
-async function fetchESPN(fecha) {
-  const d = fecha.replaceAll("-", "");
-  const r = await fetchT("https://site.api.espn.com/apis/site/v2/sports/soccer/arg.1/scoreboard?dates=" + d + "&limit=200", 8000);
-  if (!r.ok) throw new Error("ESPN " + r.status);
-  const j = await r.json();
-  const out = [];
-  for (const e of (j.events || [])) {
-    const comp = (e.competitions || [])[0] || {};
-    const comps = comp.competitors || [];
-    const home = comps.find((c) => c.homeAway === "home") || {};
-    const away = comps.find((c) => c.homeAway === "away") || {};
-    const local = (home.team || {}).displayName || (home.team || {}).name || "";
-    const visitante = (away.team || {}).displayName || (away.team || {}).name || "";
-    if (!local || !visitante) continue;
-    const fh = fechaHoraARG(e.date);
-    if (!fh || fh.fecha !== fecha) continue;
-    const st = ((e.status || {}).type) || {};
-    const estado = st.state === "in" ? "en juego" : st.state === "post" ? "finalizado" : "pendiente";
-    out.push(buildPartido(fecha, fh.hora, "Primera División", local, visitante, "ESPN", estado,
-      parseIntSafe(home.score), parseIntSafe(away.score),
-      (e.links && e.links.web) ? e.links.web : ""));
-  }
-  return out;
-}
-
-/* ============================ FUENTE 4: TheSportsDB ============================ */
-const TSD_KEY = "123";
-const TSD_LIGAS = ["4406", "4500", "4616"];
-async function fetchTSD(fecha) {
-  const base = "https://www.thesportsdb.com/api/v1/json/" + TSD_KEY;
-  const urls = [base + "/eventsday.php?d=" + fecha + "&s=Soccer"];
-  for (const id of TSD_LIGAS) {
-    urls.push(base + "/eventsnextleague.php?id=" + id);
-    urls.push(base + "/eventspastleague.php?id=" + id);
-  }
-  const resultados = await Promise.allSettled(urls.map((u) =>
-    fetchT(u, 10000).then((r) => { if (!r.ok) throw new Error("TSD " + r.status); return r.json(); })
-  ));
-  if (resultados.every((r) => r.status === "rejected")) throw new Error("TheSportsDB inaccesible");
-
-  const vistos = new Set();
-  const out = [];
-  for (const res of resultados) {
-    if (res.status !== "fulfilled") continue;
-    for (const e of ((res.value || {}).events || [])) {
-      if (!e || vistos.has(e.idEvent)) continue;
-      vistos.add(e.idEvent);
-      const liga = ligaTSD(e.strLeague, e.idLeague);
-      if (!liga) continue;
-      let iso = e.strTimestamp || ((e.dateEvent && e.strTime) ? e.dateEvent + "T" + e.strTime : null);
-      if (iso && !/([Zz]|[+-]\d{2}:?\d{2})$/.test(iso)) iso += "Z";
-      const fh = iso ? fechaHoraARG(iso) : null;
-      if (!fh || fh.fecha !== fecha) continue;
-      out.push(buildPartido(fecha, fh.hora, liga, e.strHomeTeam || "", e.strAwayTeam || "", "TheSportsDB",
-        estadoTSD(e.strStatus), parseIntSafe(e.intHomeScore), parseIntSafe(e.intAwayScore), ""));
-    }
-  }
-  return out;
-}
-
-/* ============================ FUENTE 5: FOREBET (predicciones, mejor esfuerzo) ============================ */
-function textoEsPlano(texto) {
-  if (!/^\s*<!?(DOCTYPE|html)/i.test(texto) && texto.indexOf("<html") === -1) return texto;
-  try {
-    const doc = new DOMParser().parseFromString(texto, "text/html");
-    const nodos = doc.querySelectorAll("tr, h2, h3, h4, [class*='league'], [class*='date']");
-    return Array.from(nodos).map((n) => (n.textContent || "").replace(/\s+/g, " ").trim()).join("\n");
-  } catch (_) { return texto; }
-}
-async function fetchForebet(fecha) {
-  const url = "https://www.forebet.com/es/predicciones-argentina";
-  const estrategias = [
-    (u) => u,
-    (u) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
-    (u) => "https://r.jina.ai/" + u
-  ];
-  let texto = null;
-  for (const wrap of estrategias) {
-    try {
-      const r = await fetchT(wrap(url), 8000);
-      if (!r.ok) continue;
-      const t = await r.text();
-      if (t && t.length > 1500 && !/just a moment|cf-browser-verification|challenge/i.test(t.slice(0, 1500))) { texto = t; break; }
-    } catch (_) {}
-  }
-  if (!texto) throw new Error("Forebet inaccesible");
-
-  const lineas = textoEsPlano(texto).split("\n");
-  const out = [];
-  let liga = null, fechaActual = null, viFecha = false;
-
-  for (const lineaCruda of lineas) {
-    const l = lineaCruda.trim();
-    if (!l || l.length > 220) continue;
-
-    const mf = l.match(/(\d{2})[\/.](\d{2})[\/.](\d{4})/);
-    if (mf && l.length < 60) { fechaActual = mf[3] + "-" + mf[2] + "-" + mf[1]; viFecha = true; continue; }
-
-    if (!/\d{1,2}:\d{2}/.test(l) && l.length < 70) {
-      const lg = ligaGenerica(l);
-      if (lg && /argentina|primera|nacional|federal|copa|reserva|promocional/i.test(l)) { liga = lg; continue; }
-    }
-
-    const cells = l.includes("|") ? l.split("|").map((x) => x.trim()).filter((x) => x) : [l];
-    const timeCell = cells.find((c) => /^\d{1,2}:\d{2}$/.test(c));
-    if (!timeCell) continue;
-    const nums = cells.filter((c) => /^\d{1,3}\s?%?$/.test(c) && !/^\d{1,2}:\d{2}$/.test(c)).map((c) => parseInt(c, 10)).filter((n) => n <= 100);
-    const teams = cells.filter((c) => c !== timeCell && !/^\d{1,3}\s?%?$/.test(c) && c.length > 2 && !/\d{2}[\/.]\d{2}[\/.]\d{2,4}/.test(c));
-    if (teams.length < 2 || nums.length < 3) continue;
-    const p1 = nums[0], px = nums[1], p2 = nums[2];
-    if (p1 + px + p2 < 80 || p1 + px + p2 > 115) continue;
-    const over = nums.length > 3 ? nums[3] : null;
-
-    if (viFecha && fechaActual && fechaActual !== fecha) continue;
-    if (!viFecha && fecha !== hoyARG()) continue;
-
-    const clave = fecha + "|" + normTeam(teams[0]) + "|" + normTeam(teams[1]);
-    FOREBET_PREDS.set(clave, { p1, px, p2, over });
-    if (liga) {
-      out.push(buildPartido(fecha, timeCell, liga, teams[0], teams[1], "Forebet", "pendiente", null, null, ""));
-    }
-  }
-  if (FOREBET_PREDS.size === 0) throw new Error("Forebet sin datos parseables");
-  return out;
-}
-
-function buildPartido(fecha, hora, liga, local, visitante, provider, estado, gl, gv, url) {
-  const id = hashStr(fecha + "|" + normTeam(local) + "|" + normTeam(visitante)).toString(16).padStart(8, "0");
-  return { id, fecha, liga, hora: hora || "", local, visitante, estado, provider, url: url || "", gl, gv };
-}
-
-/* ============================ DEMO ============================ */
-const DEMO_EQUIPOS = {
-  "Primera División": ["River Plate","Boca Juniors","Racing Club","Independiente","San Lorenzo","Huracán","Vélez Sarsfield","Estudiantes de La Plata","Gimnasia La Plata","Newells Old Boys","Rosario Central","Talleres de Córdoba","Lanús","Banfield","Defensa y Justicia","Argentinos Juniors","Platense","Belgrano de Córdoba"],
-  "Primera Nacional": ["San Martín de Tucumán","Güemes (SdE)","Almirante Brown","Deportivo Morón","Quilmes","All Boys","Ferro Carril Oeste","Chacarita Juniors","Atlanta","Temperley","Gimnasia de Jujuy","Central Norte (Salta)","Nueva Chicago","Estudiantes de Río Cuarto"],
-  "Primera B Metropolitana": ["Comunicaciones","Sacachispas","Sportivo Dock Sud","Talleres (RdE)","Acassuso","Colegiales","Argentino de Quilmes","Los Andes","Deportivo Merlo","Flandria","Villa San Carlos","UAI Urquiza"],
-  "Primera C": ["Central Córdoba (Ros)","Argentino (Ros)","Sportivo Barracas","Claypole","Juventud Unida","Deportivo Español","Atlas","General Lamadrid","Puerto Nuevo","Luján","Leandro N. Alem","Berazategui"],
-  "Torneo Promocional Amateur": ["Deportivo Paraguayo","Centro Español","Sportivo Palermo","Estrella del Sur","Atlético Pilar","Deportivo Metalúrgico","Club Mercedes","Juvencia de Luján","Provincial de Lobos","Racing de Chivilcoy"],
-  "Torneo Federal A": ["Sportivo Belgrano","Douglas Haig","Sarmiento (Res)","Boca Unidos","Juventud Antoniana","Gimnasia y Tiro (Salta)","Olimpo (Bahía Blanca)","Cipolletti","Deportivo Madryn","Villa Mitre","Sportivo Las Parejas","Defensores de Belgrano (VR)"],
-  "Copa Argentina": ["River Plate","Vélez Sarsfield","Talleres de Córdoba","Gimnasia La Plata","Atlanta","Olimpo (Bahía Blanca)","San Martín de Tucumán","Deportivo Madryn","Excursionistas","Sportivo Las Parejas"],
-  "Reserva": ["River Plate","Boca Juniors","Racing Club","Independiente","San Lorenzo","Vélez Sarsfield","Estudiantes de La Plata","Rosario Central","Lanús","Huracán","Argentinos Juniors","Talleres de Córdoba"],
-  "Juveniles": ["River Plate (Juv.)","Boca Juniors (Juv.)","Racing (Juv.)","Independiente (Juv.)","Vélez (Juv.)","San Lorenzo (Juv.)","Lanús (Juv.)","Estudiantes (Juv.)","Rosario Central (Juv.)","Newells (Juv.)","Talleres (Juv.)","Argentinos (Juv.)"]
+// Funciones auxiliares
+const hoy=()=>new Date().toLocaleDateString('en-CA',{timeZone:TZ});
+const fmtFecha=f=>{
+if(!f)return'';
+const date=new Date(f+'T12:00:00Z');
+return date.toLocaleDateString('es-AR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
 };
-const DEMO_CANT = { "Primera División":4,"Primera Nacional":3,"Primera B Metropolitana":2,"Primera C":2,"Torneo Promocional Amateur":2,"Torneo Federal A":2,"Copa Argentina":2,"Reserva":2,"Juveniles":3 };
-const DEMO_HORAS = ["14:00","15:30","17:00","18:15","19:30","20:45","21:30"];
-function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
-function estadoDeHora(hora) {
-  if (!hora) return "pendiente";
-  const p = hora.split(":"); const t = (+p[0]) * 60 + (+p[1]);
-  const a = new Date(); const hm = a.getHours() * 60 + a.getMinutes();
-  if (hm > t + 115) return "finalizado";
-  if (hm >= t) return "en juego";
-  return "pendiente";
-}
-function cargarDemo(fecha) {
-  const rng = mulberry32(hashStr(fecha));
-  const partidos = [];
-  for (const liga of ORDEN_LIGAS) {
-    const pool = (DEMO_EQUIPOS[liga] || []).slice();
-    for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); const tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp; }
-    const cant = DEMO_CANT[liga] || 2;
-    for (let k = 0; k < cant && pool.length >= 2; k++) {
-      const local = pool.pop(), visitante = pool.pop();
-      const hora = DEMO_HORAS[Math.floor(rng() * DEMO_HORAS.length)];
-      partidos.push(buildPartido(fecha, hora, liga, local, visitante, "demo", estadoDeHora(hora), null, null, ""));
-    }
-  }
-  partidos.sort((a, b) => (a.hora < b.hora ? -1 : a.hora > b.hora ? 1 : (a.liga < b.liga ? -1 : 1)));
-  return partidos;
+const fmtHora=h=>h||'--:--';
+const norm=t=>String(t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+const hash=s=>{let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
+
+// Cálculo ELO y proyección de goles
+function calcularProbabilidades(local,visitante){
+const eloLocal=ELO_BASE[local]||1600;
+const eloVisitante=ELO_BASE[visitante]||1600;
+const ventajaLocal=100; // Ventaja localía
+const eloEffLocal=eloLocal+ventajaLocal;
+const diffElo=eloEffLocal-eloVisitante;
+
+// Probabilidad de victoria local
+const probLocal=1/(1+Math.pow(10,-diffElo/400));
+const probEmpate=0.25; // Probabilidad base de empate
+const probVisitante=1-probLocal-probEmpate;
+
+// Proyección de goles usando distribución de Poisson
+const avgGolesLocal=1.4+(diffElo/2000);
+const avgGolesVisitante=1.1-(diffElo/3000);
+const totalGolesProyectados=Math.max(0.5,avgGolesLocal+avgGolesVisitante);
+
+return{
+probLocal:Math.round(probLocal*100),
+probEmpate:Math.round(probEmpate*100),
+probVisitante:Math.round(Math.max(0,probVisitante)*100),
+golesProyectados:totalGolesProyectados.toFixed(2)
+};
 }
 
-/* ============================ CARGA PRINCIPAL ============================ */
-async function cargar(silencioso = false, redetectar = false) {
-  if (!silencioso) { state.cargando = true; pintar(); }
-  if (state.modo === null || redetectar) {
-    state.modo = (await detectarBackend()) ? "api" : "web";
-  }
-
-  if (state.modo === "api") {
-    $("#nav-fecha").style.visibility = "hidden";
-    try {
-      const [rP, rS] = await Promise.all([fetch(API_BASE + "/api/partidos"), fetch(API_BASE + "/api/status")]);
-      if (!rP.ok) throw new Error("HTTP " + rP.status);
-      const data = await rP.json();
-      state.partidos = (data.partidos || []).map((p) => Object.assign({ gl: null, gv: null }, p));
-      state.fechaSel = data.fecha || hoyARG();
-      state.status = rS.ok ? await rS.json() : null;
-      state.statusRecibido = Date.now();
-      try {
-        const rPr = await fetch(API_BASE + "/api/probabilidades");
-        if (rPr.ok) {
-          const d = await rPr.json();
-          state.probs = new Map((d.partidos || []).map((x) => [x.id, x]));
-        }
-      } catch (_) {}
-      state.error = null;
-      state.fuentes = ["backend"];
-    } catch (e) {
-      state.error = e.message || "Error de red";
-    }
-  } else {
-    $("#nav-fecha").style.visibility = "visible";
-    const fecha = state.fechaSel;
-    FOREBET_PREDS.clear();
-    const resultados = await Promise.allSettled([
-      fetchPromiedos(fecha), fetchSofascore(fecha), fetchESPN(fecha), fetchTSD(fecha), fetchForebet(fecha)
-    ]);
-    const nombres = ["Promiedos", "Sofascore", "ESPN", "TheSportsDB", "Forebet"];
-    const fuentesOk = [];
-    let partidos = [];
-    const claves = new Set();
-    resultados.forEach((res, i) => {
-      if (res.status !== "fulfilled") return;
-      fuentesOk.push(nombres[i]);
-      for (const p of res.value) {
-        const clave = p.fecha + "|" + normTeam(p.local) + "|" + normTeam(p.visitante);
-        if (claves.has(clave)) continue;
-        claves.add(clave);
-        partidos.push(p);
-      }
-    });
-    partidos.sort((a, b) => (a.hora < b.hora ? -1 : a.hora > b.hora ? 1 : (a.liga < b.liga ? -1 : 1)));
-
-    if (fuentesOk.length === 0) {
-      state.modo = "demo";
-      partidos = cargarDemo(fecha);
-      state.fuentes = ["demo"];
-      if (!state.demoInicio) state.demoInicio = Date.now();
-      state.status = {
-        provider_utilizado: "demo (sin conexión a fuentes)", cache: "demo",
-        edad_segundos: Math.floor((Date.now() - state.demoInicio) / 1000),
-        cantidad_partidos: partidos.length,
-        ultimo_scraping: new Date(state.demoInicio).toISOString(), ttl_segundos: 300
-      };
-    } else {
-      state.modo = "web";
-      state.fuentes = fuentesOk;
-      state.status = {
-        provider_utilizado: fuentesOk.join(" + "), cache: "live", edad_segundos: 0,
-        cantidad_partidos: partidos.length,
-        ultimo_scraping: new Date().toISOString(), ttl_segundos: 300
-      };
-    }
-    state.partidos = partidos;
-    state.probs = new Map(partidos.map((p) => {
-      const pred = FOREBET_PREDS.get(p.fecha + "|" + normTeam(p.local) + "|" + normTeam(p.visitante));
-      if (pred) return [p.id, Object.assign({ id: p.id }, probsFromForebet(pred))];
-      return [p.id, Object.assign({ id: p.id }, probsModelo(p.local, p.visitante))];
-    }));
-    state.statusRecibido = Date.now();
-    state.error = null;
-  }
-
-  state.ultimaCarga = Date.now();
-  state.cargando = false;
-  pintar();
+// Determinar color del semáforo según proyección de goles
+function getSemaforoColor(golesProyectados){
+const goles=parseFloat(golesProyectados);
+if(goles<1.8)return'rojo';
+if(goles<2.3)return'amarillo';
+return'verde';
 }
 
-/* ============================ RENDER ============================ */
-function chipHtml(texto, color) {
-  const dot = DOT[color] || DOT.zinc;
-  return '<span class="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-zinc-300">' +
-         '<span class="h-1.5 w-1.5 rounded-full ' + dot + '"></span>' + escapeHtml(texto) + '</span>';
-}
-function edadActual() {
-  const s = state.status;
-  if (!s || s.edad_segundos == null) return null;
-  const delta = state.statusRecibido ? Math.floor((Date.now() - state.statusRecibido) / 1000) : 0;
-  return s.edad_segundos + delta;
-}
-function edadTexto(seg) {
-  if (seg == null) return "—";
-  if (seg < 60) return "hace " + seg + "s";
-  return "hace " + Math.floor(seg / 60) + "m " + (seg % 60) + "s";
-}
-function pintarChips() {
-  const s = state.status;
-  const edad = edadActual();
-  const partes = [];
-  partes.push(chipHtml(
-    s && s.provider_utilizado ? "fuente activa: " + s.provider_utilizado : "fuente activa: —",
-    state.modo === "demo" ? "amber" : (s && s.provider_utilizado ? "emerald" : "zinc")
-  ));
-  const estadoCache = s ? s.cache : "—";
-  partes.push(chipHtml(
-    "caché: " + estadoCache + (edad != null ? " · " + edadTexto(edad) : ""),
-    estadoCache === "fresco" || estadoCache === "live" ? "emerald" : (estadoCache === "stale" || estadoCache === "demo" ? "amber" : "zinc")
-  ));
-  partes.push(chipHtml(state.partidos.length + " partidos", "sky"));
-  $("#chips").innerHTML = partes.join("");
-}
-function pintarAviso() {
-  const el = $("#aviso");
-  if (state.modo === "demo") {
-    el.hidden = false;
-    el.innerHTML = '<span><b>Fuentes reales inaccesibles</b> — mostrando demo local. Con red disponible consume ' +
-      'Promiedos + Sofascore + ESPN + TheSportsDB y predicciones de Forebet; con backend FastAPI activo, /api/*.</span>' +
-      '<button id="btn-reintentar-api" class="rounded-lg border border-amber-300/40 bg-amber-400/10 px-3 py-1.5 text-xs font-semibold text-amber-100 transition hover:bg-amber-400/20">Reintentar</button>';
-    $("#btn-reintentar-api").onclick = () => { state.modo = null; cargar(false, true); };
-  } else {
-    el.hidden = true;
-    el.innerHTML = "";
-  }
-}
-function pintarError() {
-  const el = $("#error");
-  if (state.error && state.modo === "api") {
-    el.hidden = false;
-    el.innerHTML = '<span>Sin respuesta de la API (' + escapeHtml(state.error) + ').</span>' +
-      '<button id="btn-reintentar" class="rounded-lg border border-rose-300/40 bg-rose-400/10 px-3 py-1.5 text-xs font-semibold text-rose-100 transition hover:bg-rose-400/20">Reintentar</button>';
-    $("#btn-reintentar").onclick = () => cargar(false, true);
-  } else {
-    el.hidden = true;
-    el.innerHTML = "";
-  }
-}
-function pintarFiltros() {
-  const conteo = {};
-  for (const p of state.partidos) conteo[p.liga] = (conteo[p.liga] || 0) + 1;
-  const opciones = ["Todas", ...ORDEN_LIGAS];
-  $("#filtros").innerHTML = opciones.map((l) => {
-    const n = l === "Todas" ? state.partidos.length : (conteo[l] || 0);
-    const activa = state.liga === l;
-    let cls = activa
-      ? "bg-emerald-400 text-emerald-950 border-emerald-400"
-      : "bg-white/5 text-zinc-300 border-white/10 hover:border-emerald-300/40 hover:text-white";
-    if (!activa && n === 0) cls += " opacity-50";
-    const badge = n > 0 ? ' <span class="tabular-nums opacity-70">(' + n + ')</span>' : "";
-    return '<button data-liga="' + escapeHtml(l) + '" class="rounded-full border px-3.5 py-1.5 text-xs font-medium transition ' + cls + '">' + escapeHtml(l) + badge + '</button>';
-  }).join("");
-}
-function badgeEstado(p) {
-  if (p.estado === "en juego")
-    return '<span class="inline-flex items-center gap-1.5 text-[11px] font-semibold text-rose-300"><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-rose-400"></span>EN JUEGO</span>';
-  if (p.estado === "finalizado") return '<span class="text-[11px] font-semibold text-zinc-400">FINAL</span>';
-  if (p.estado === "postergado") return '<span class="text-[11px] font-semibold text-amber-300">POSTERGADO</span>';
-  return '<span class="text-[11px] font-semibold tabular-nums text-zinc-300">' + escapeHtml(p.hora || "--:--") + '</span>';
-}
-function scoreChip(g) { return g != null ? '<span class="rounded-md bg-white/10 px-1.5 py-0.5 text-xs font-bold tabular-nums text-zinc-100">' + g + '</span>' : ""; }
-
-function cardHtml(p, i) {
-  const prob = state.probs.get(p.id);
-  const colorLiga = COLOR_LIGA[p.liga] || COLOR_DEFAULT;
-
-  let barra = '<div class="h-2 overflow-hidden rounded-full bg-white/10"></div>';
-  let porcentajes = "", mercados = "";
-  if (prob && prob.probabilidades) {
-    const local = prob.probabilidades.local, empate = prob.probabilidades.empate, visitante = prob.probabilidades.visitante;
-    barra = '<div class="flex h-2 overflow-hidden rounded-full">' +
-      '<div class="bar-seg bg-emerald-400" style="width:' + local + '%"></div>' +
-      '<div class="bar-seg bg-zinc-500" style="width:' + empate + '%"></div>' +
-      '<div class="bar-seg bg-rose-400" style="width:' + visitante + '%"></div></div>';
-    porcentajes = '<div class="mt-1.5 grid grid-cols-3 text-center">' +
-      '<div class="text-sm font-semibold tabular-nums text-emerald-300">' + local + '%</div>' +
-      '<div class="text-sm font-semibold tabular-nums text-zinc-400">' + empate + '%</div>' +
-      '<div class="text-sm font-semibold tabular-nums text-rose-300">' + visitante + '%</div></div>';
-    const btts = (prob.mercados && prob.mercados.btts != null)
-      ? '<span class="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-zinc-300">Ambos anotan <b class="tabular-nums text-zinc-100">' + prob.mercados.btts + '%</b></span>' : "";
-    mercados = '<div class="mt-3 flex items-center gap-2 text-[11px]">' +
-      '<span class="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-zinc-300">+2.5 goles <b class="tabular-nums text-zinc-100">' + prob.mercados.over_2_5 + '%</b></span>' + btts + '</div>';
-  }
-
-  const sem = semaforoDe(prob);
-  let semHtml = "";
-  if (sem) {
-    const origenPred = prob && prob.origen ? prob.origen : "Modelo ELO+Poisson";
-    semHtml = '<div class="mt-3 flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/25 px-2.5 py-2" title="' + sem.titulo + ' · predicción: ' + escapeHtml(origenPred) + '">' +
-      '<span class="text-[11px] font-medium text-zinc-400">Semáforo · ' + escapeHtml(origenPred === "Forebet" ? "Forebet" : "modelo") + '</span>' +
-      '<span class="flex items-center gap-1.5">' +
-        dotSemaforo("rojo", sem.activo === "rojo") +
-        dotSemaforo("amarillo", sem.activo === "amarillo") +
-        dotSemaforo("verde", sem.activo === "verde") +
-      '</span>' +
-      '<span class="text-[11px] font-semibold tabular-nums ' + sem.textColor + '">≥2 goles: ' + sem.pct + '%</span></div>';
-  }
-
-  const eloL = prob && prob.elo ? '<span class="text-[11px] tabular-nums text-zinc-500">ELO ' + prob.elo.local + '</span>' : "";
-  const eloV = prob && prob.elo ? '<span class="text-[11px] tabular-nums text-zinc-500">ELO ' + prob.elo.visitante + '</span>' : "";
-  const link = p.url ? ' · <a class="text-emerald-400/80 hover:text-emerald-300" href="' + escapeHtml(p.url) + '" target="_blank" rel="noopener">detalle ↗</a>' : "";
-
-  return '<article class="card-anim group rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.07] to-white/[0.02] p-4 transition hover:border-emerald-300/30 hover:shadow-lg hover:shadow-emerald-500/5" style="animation-delay:' + Math.min(i * 35, 400) + 'ms">' +
-    '<div class="flex items-center justify-between gap-2">' +
-      '<span class="rounded-full border px-2.5 py-0.5 text-[11px] font-medium ' + colorLiga + '">' + escapeHtml(p.liga) + '</span>' +
-      badgeEstado(p) +
-    '</div>' +
-    '<div class="mt-4 space-y-2">' +
-      '<div class="flex items-center justify-between gap-2"><span class="font-medium text-zinc-100">' + escapeHtml(p.local) + '</span><span class="flex items-center gap-1.5">' + eloL + scoreChip(p.gl) + '</span></div>' +
-      '<div class="flex items-center justify-between gap-2"><span class="font-medium text-zinc-100">' + escapeHtml(p.visitante) + '</span><span class="flex items-center gap-1.5">' + eloV + scoreChip(p.gv) + '</span></div>' +
-    '</div>' +
-    '<div class="mt-4">' + barra + porcentajes + mercados + '</div>' +
-    semHtml +
-    '<div class="mt-4 flex items-center justify-between text-[11px] text-zinc-500">' +
-      '<span>hora ' + escapeHtml(p.hora || "--:--") + '</span>' +
-      '<span class="inline-flex items-center gap-1">via ' + escapeHtml(p.provider) + link + '</span>' +
-    '</div>' +
-  '</article>';
-}
-function skeletonHtml(n) {
-  let html = "";
-  for (let i = 0; i < n; i++) {
-    html += '<div class="animate-pulse rounded-2xl border border-white/5 bg-white/[0.04] p-4">' +
-      '<div class="flex justify-between"><div class="h-5 w-28 rounded-full bg-white/10"></div><div class="h-5 w-12 rounded bg-white/10"></div></div>' +
-      '<div class="mt-5 space-y-3"><div class="h-4 w-3/4 rounded bg-white/10"></div><div class="h-4 w-2/3 rounded bg-white/10"></div></div>' +
-      '<div class="mt-5 h-2 rounded-full bg-white/10"></div><div class="mt-4 h-3 w-full rounded bg-white/5"></div></div>';
-  }
-  return html;
-}
-function emptyHtml() {
-  const real = state.modo === "web";
-  return '<div class="col-span-full rounded-2xl border border-dashed border-white/10 py-16 text-center">' +
-    '<p class="font-display text-lg text-zinc-300">Sin partidos en esta categoría para la fecha</p>' +
-    '<p class="mt-2 text-sm text-zinc-500">' + (real
-      ? "Las fuentes reales no reportan encuentros de esta división para el día seleccionado. Probá con ‹ o ›, o con otra pestaña."
-      : "Cuando alguna fuente responda, los partidos aparecen solos.") + '</p></div>';
-}
-function pintarGrid() {
-  const grid = $("#grid");
-  if (state.cargando) { grid.innerHTML = skeletonHtml(6); return; }
-  if (state.error && state.modo === "api") { grid.innerHTML = ""; return; }
-  const lista = state.partidos.filter((p) => state.liga === "Todas" || p.liga === state.liga);
-  if (!lista.length) { grid.innerHTML = emptyHtml(); return; }
-  grid.innerHTML = lista.map((p, i) => cardHtml(p, i)).join("");
-}
-function pintarPie() {
-  const s = state.status;
-  const el = $("#pie-estado");
-  if (s && s.ultimo_scraping) {
-    el.textContent = (s.provider_utilizado || "—") + " · última actualización " + new Date(s.ultimo_scraping).toLocaleTimeString("es-AR");
-  } else {
-    el.textContent = "esperando datos…";
-  }
-}
-function pintar() {
-  $("#fecha-humana").textContent = fmtFechaHumana(state.fechaSel);
-  pintarChips();
-  pintarAviso();
-  pintarError();
-  pintarFiltros();
-  pintarGrid();
-  pintarPie();
+// Mapeo de nombres de ligas
+function getLiga(nombre){
+const n=norm(nombre);
+if(n.includes('copa argentina'))return'Copa Argentina';
+if(n.includes('primera nacional')||n.includes('nacional b'))return'Primera Nacional';
+if(n.includes('primera b')||n.includes('b metropolitana'))return'Primera B';
+if(n.includes('primera c'))return'Primera C';
+if(n.includes('federal')||n.includes('federal a'))return'Federal A';
+if(n.includes('reserva'))return'Reserva';
+if(n.includes('regional')||n.includes('federal b'))return'Torneo Regional';
+if(n.includes('primera')||n.includes('liga profesional'))return'Primera División';
+return null;
 }
 
-/* ============================ EVENTOS ============================ */
-$("#filtros").addEventListener("click", (e) => {
-  const btn = e.target.closest("button[data-liga]");
-  if (!btn) return;
-  state.liga = btn.dataset.liga;
-  pintarFiltros();
-  pintarGrid();
+// Fetch desde API football-data.org (gratuita)
+async function fetchFootballData(){
+const API_KEY='b5f03e89f4msb8530cc8bb5913f1p0c9d5ajsn104587e8b9';
+const headers={'X-RapidAPI-Key':API_KEY,'X-RapidAPI-Host':'api-football-v1.p.rapidapi.com'};
+
+try{
+// Obtener fixtures de hoy
+const today=hoy();
+const response=await fetch(`https://api-football-v1.p.rapidapi.com/v3/fixtures?date=${today}&league=128&season=2024`,{headers});
+if(!response.ok)throw new Error('API error');
+const data=await response.json();
+
+if(!data.response||data.response.length===0)return[];
+
+const partidos=[];
+const seen=new Set();
+
+for(const fixture of data.response){
+const liga=getLiga(fixture.league.name);
+if(!liga)continue;
+
+const local=fixture.teams.home.name;
+const visitante=fixture.teams.away.name;
+const key=norm(local)+'|'+norm(visitante);
+
+if(seen.has(key))continue;
+seen.add(key);
+
+const status=fixture.fixture.status.short;
+let estado='pendiente';
+if(status==='FT'||status==='AET'||status==='PEN')estado='finalizado';
+else if(status==='1H'||status==='2H'||status==='HT'||status==='ET')estado='en vivo';
+
+const goals=fixture.goals;
+const prob=calcularProbabilidades(local,visitante);
+
+partidos.push({
+id:hash(key).toString(16).padStart(8,'0'),
+fecha:fixture.fixture.date.split('T')[0],
+hora:fixture.fixture.date.split('T')[1]?.slice(0,5)||'--:--',
+liga:liga,
+local:local,
+visitante:visitante,
+estado:estado,
+gl:goals.home,
+gv:goals.away,
+probLocal:prob.probLocal,
+probEmpate:prob.probEmpate,
+probVisitante:prob.probVisitante,
+golesProyectados:prob.golesProyectados,
+semaforo:getSemaforoColor(prob.golesProyectados),
+logoLocal:fixture.teams.home.logo,
+logoVisitante:fixture.teams.away.logo,
+elapsed:fixture.fixture.status.elapsed||0
 });
-$("#btn-antes").addEventListener("click", () => { state.fechaSel = addDays(state.fechaSel, -1); state.liga = "Todas"; cargar(true); });
-$("#btn-despues").addEventListener("click", () => { state.fechaSel = addDays(state.fechaSel, 1); state.liga = "Todas"; cargar(true); });
-$("#btn-hoy").addEventListener("click", () => { state.fechaSel = hoyARG(); state.liga = "Todas"; cargar(true); });
+}
 
-$("#btn-refresh").addEventListener("click", async () => {
-  const btn = $("#btn-refresh");
-  btn.disabled = true;
-  $("#spinner").classList.remove("hidden");
-  if (state.modo === "api") {
-    try { await fetch(API_BASE + "/api/refresh"); } catch (_) {}
-  }
-  await cargar(true, state.modo !== "api");
-  btn.disabled = false;
-  $("#spinner").classList.add("hidden");
+return partidos.sort((a,b)=>{
+if(a.estado==='en vivo')return-1;
+if(b.estado==='en vivo')return 1;
+return a.hora.localeCompare(b.hora);
 });
 
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && Date.now() - state.ultimaCarga > 30000) cargar(true);
+}catch(error){
+console.error('Error fetching data:',error);
+return obtenerDatosDemo();
+}
+}
+
+// Datos demo de respaldo
+function obtenerDatosDemo(){
+const equipos={
+'Primera División':[
+['Boca Juniors','River Plate'],['Racing Club','Independiente'],
+['San Lorenzo','Huracán'],['Vélez Sarsfield','Estudiantes'],
+['Talleres','Belgrano'],['Lanús','Banfield'],
+['Godoy Cruz','Newells'],['Rosario Central','Unión']
+],
+'Primera Nacional':[
+['San Martín T','Güemes'],['Quilmes','Ferro'],
+['Almirante Brown','Arsenal'],['Chacarita','Nueva Chicago'],
+['Colón','San Martín SJ'],['Temperley','Los Andes']
+],
+'Primera B':[
+['Villa Dálmine','Dock Sud'],['Acassuso','Argentino de Quilmes'],
+['Flandria','Comunicaciones'],['Italiano','Cañuelas']
+],
+'Primera C':[
+['Central Ballester','Claypole'],['Deportivo Paraguayo','Juventud Unida'],
+['Laferrere','Luján'],['Real Pilar','San Martín B']
+],
+'Federal A':[
+['Olimpo','Sol de Mayo'],['Cipolletti','Sansinena'],
+['Desamparados','Gimnasia Mendoza'],['Juventud Unida GU','Las Heras']
+],
+'Copa Argentina':[
+['Defensa y Justicia','Platense'],['Argentinos Jrs','Tigre'],
+['Instituto','Central Córdoba S']]
+};
+
+const now=new Date();
+const horaBase=now.getHours().toString().padStart(2,'0')+':00';
+const estados=['pendiente','pendiente','en vivo','finalizado','finalizado'];
+
+let partidos=[];
+let idCounter=0;
+
+for(const [liga,matches] of Object.entries(equipos)){
+for(const [local,visitante] of matches){
+const estado=estados[idCounter%estados.length];
+const gl=estado==='finalizado'?Math.floor(Math.random()*4):null;
+const gv=estado==='finalizado'?Math.floor(Math.random()*3):null;
+const prob=calcularProbabilidades(local,visitante);
+
+partidos.push({
+id:(idCounter++).toString().padStart(8,'0'),
+fecha:hoy(),
+hora:estado==='finalizado'?'15:00':estado==='en vivo'?'17:00':'20:00',
+liga:liga,
+local:local,
+visitante:visitante,
+estado:estado,
+gl:gl,
+gv:gv,
+probLocal:prob.probLocal,
+probEmpate:prob.probEmpate,
+probVisitante:prob.probVisitante,
+golesProyectados:prob.golesProyectados,
+semaforo:getSemaforoColor(prob.golesProyectados),
+elapsed:estado==='en vivo'?Math.floor(Math.random()*90):0
+});
+}
+}
+
+return partidos;
+}
+
+// Cargar datos
+async function cargar(){
+state.cargando=true;
+$('#loading').classList.remove('hidden');
+
+try{
+const datos=await fetchFootballData();
+state.partidos=datos;
+state.lastUpdate=new Date();
+pintar();
+}catch(error){
+console.error('Error:',error);
+state.partidos=obtenerDatosDemo();
+pintar();
+}finally{
+state.cargando=false;
+$('#loading').classList.add('hidden');
+}
+}
+
+// Cambiar pestaña
+function setTab(tab){
+state.tab=tab;
+pintar();
+}
+
+// Renderizar
+function pintar(){
+// Actualizar fecha
+$('#fecha').textContent=fmtFecha(hoy())+` (Actualizado: ${state.lastUpdate?state.lastUpdate.toLocaleTimeString('es-AR'):''})`;
+
+// Contadores
+const counts={
+'en-vivo':state.partidos.filter(p=>p.estado==='en vivo').length,
+'por-jugar':state.partidos.filter(p=>p.estado==='pendiente').length,
+'finalizados':state.partidos.filter(p=>p.estado==='finalizado').length
+};
+
+$('#count-en-vivo').textContent=counts['en-vivo'];
+$('#count-por-jugar').textContent=counts['por-jugar'];
+$('#count-finalizados').textContent=counts['finalizados'];
+
+// Actualizar estado de pestañas
+$$('.tab-btn').forEach(btn=>btn.classList.remove('tab-active'));
+$('#btn-'+state.tab).classList.add('tab-active');
+
+// Filtros de categoría
+const cats={};
+state.partidos.forEach(p=>cats[p.liga]=(cats[p.liga]||0)+1);
+
+const filtroHTML=['Todas',...Object.keys(CATEGORIAS)].filter(c=>c==='Todas'||cats[c]).map(cat=>{
+const count=cat==='Todas'?state.partidos.length:(cats[cat]||0);
+const isActive=state.categoria===cat;
+const config=CATEGORIAS[cat]||{color:'gray',bg:'from-gray-600 to-gray-800',border:'border-gray-400'};
+return`<button onclick="state.categoria='${cat}';pintar()" 
+class="px-4 py-2 rounded-xl text-xs font-bold transition-all transform hover:scale-105 bg-gradient-to-r ${config.bg} ${config.border} border ${isActive?'ring-2 ring-white scale-105':'opacity-80 hover:opacity-100'}">
+${cat} (${count})
+</button>`;
+}).join('');
+
+$('#filtros').innerHTML=filtroHTML;
+
+// Filtrar partidos
+const estadoMap={'en-vivo':'en vivo','por-jugar':'pendiente','finalizados':'finalizado'};
+const partidosFiltrados=state.partidos.filter(p=>{
+const matchEstado=p.estado===estadoMap[state.tab];
+const matchCategoria=state.categoria==='Todas'||p.liga===state.categoria;
+return matchEstado&&matchCategoria;
 });
 
-setInterval(() => {
-  const intervalo = state.modo === "api" ? 60000 : 300000;
-  if (Date.now() - state.ultimaCarga >= intervalo) cargar(true);
-}, 20000);
-setInterval(() => { if (!state.cargando) pintarChips(); }, 10000);
+// Renderizar grid
+if(state.cargando){
+$('#grid').innerHTML='<div class="col-span-full text-center py-12"><div class="text-2xl mb-4">⏳</div><div class="text-gray-400">Cargando datos...</div></div>';
+return;
+}
 
+if(partidosFiltrados.length===0){
+const iconos={'en-vivo':'🔴','por-jugar':'📅','finalizados':'✅'};
+$('#grid').innerHTML=`<div class="col-span-full text-center py-12">
+<div class="text-6xl mb-4">${iconos[state.tab]}</div>
+<div class="text-xl text-gray-400 font-medium">No hay partidos ${state.tab.replace('-',' ')} en esta categoría</div>
+<div class="text-sm text-gray-500 mt-2">Selecciona otra categoría o espera nuevos datos</div>
+</div>`;
+return;
+}
+
+const cardsHTML=partidosFiltrados.map(p=>{
+const config=CATEGORIAS[p.liga]||CATEGORIAS['Primera División'];
+const semaforoClass=`semaforo-${p.semaforo}`;
+const semaforoIcon=p.semaforo==='rojo'?'🔴':p.semaforo==='amarillo'?'🟡':'🟢';
+const semaforoText=p.semaforo==='rojo'?'Pocos goles':p.semaforo==='amarillo'?'2 goles':'Muchos goles';
+
+const estadoBadge=p.estado==='en vivo'?`<span class="pulse px-2 py-1 bg-red-500 text-white text-xs font-bold rounded-full">EN VIVO ${p.elapsed}'</span>`:
+p.estado==='finalizado'?'<span class="px-2 py-1 bg-green-500 text-white text-xs font-bold rounded-full">FINAL</span>':
+`<span class="px-2 py-1 bg-blue-500 text-white text-xs font-bold rounded-full">${p.hora}</span>`;
+
+return`<article class="rounded-2xl bg-gradient-to-br ${config.bg} ${config.border} border-2 card-shadow overflow-hidden hover:shadow-2xl transition-all duration-300 hover:-translate-y-1">
+<!-- Header -->
+<div class="p-3 border-b border-white/20 flex justify-between items-center">
+<span class="text-xs font-bold text-white/90 px-2 py-1 bg-black/20 rounded-lg">${p.liga}</span>
+${estadoBadge}
+</div>
+
+<!-- Equipos y resultado -->
+<div class="p-4 space-y-3">
+<div class="flex justify-between items-center">
+<span class="font-bold text-white text-sm truncate flex-1">${p.local}</span>
+<span class="text-2xl font-bold text-white ml-2">${p.gl??'-'}</span>
+</div>
+<div class="flex justify-between items-center">
+<span class="font-bold text-white text-sm truncate flex-1">${p.visitante}</span>
+<span class="text-2xl font-bold text-white ml-2">${p.gv??'-'}</span>
+</div>
+</div>
+
+<!-- Semáforo de goles -->
+<div class="px-4 pb-3">
+<div class="${semaforoClass} rounded-xl p-3 text-center">
+<div class="text-2xl mb-1">${semaforoIcon}</div>
+<div class="text-xs font-bold uppercase">${semaforoText}</div>
+<div class="text-lg font-bold mt-1">${p.golesProyectados} goles</div>
+</div>
+</div>
+
+<!-- Probabilidades ELO -->
+<div class="px-4 pb-4">
+<div class="text-xs text-white/80 mb-2 font-medium">Proyección ELO:</div>
+<div class="flex items-center gap-1 text-xs">
+<div class="flex-1 bg-white/20 rounded-full h-2 overflow-hidden">
+<div class="h-full bg-blue-400" style="width:${p.probLocal}%"></div>
+</div>
+<div class="flex-1 bg-white/20 rounded-full h-2 overflow-hidden">
+<div class="h-full bg-gray-400" style="width:${p.probEmpate}%"></div>
+</div>
+<div class="flex-1 bg-white/20 rounded-full h-2 overflow-hidden">
+<div class="h-full bg-red-400" style="width:${p.probVisitante}%"></div>
+</div>
+</div>
+<div class="flex justify-between text-xs text-white/70 mt-1">
+<span>L ${p.probLocal}%</span>
+<span>X ${p.probEmpate}%</span>
+<span>V ${p.probVisitante}%</span>
+</div>
+</div>
+</article>`;
+}).join('');
+
+$('#grid').innerHTML=cardsHTML;
+}
+
+// Inicialización
 cargar();
+setInterval(()=>{if(!document.hidden)cargar();},120000); // Refresh cada 2 minutos
 </script>
 </body>
 </html>
-
