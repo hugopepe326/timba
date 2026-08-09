@@ -16,6 +16,14 @@
 <meta name="color-scheme" content="dark">
 <title>FútbolAR · Análisis del día</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
+<link rel="preconnect" href="https://cdn.tailwindcss.com">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://api.sofascore.com">
+<link rel="preconnect" href="https://site.api.espn.com">
+<link rel="preconnect" href="https://www.thesportsdb.com">
+<link rel="preconnect" href="https://www.forebet.com">
+<link rel="dns-prefetch" href="https://api.allorigins.win">
+<link rel="dns-prefetch" href="https://corsproxy.io">
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/fonts/inter@latest/latin-400-normal.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/fonts/inter@latest/latin-500-normal.css">
@@ -45,6 +53,8 @@ tailwind.config = {
   .bar-seg { transition: width .6s cubic-bezier(.22,1,.36,1); }
   @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
   .card-anim { animation: fadeUp .35s ease both; }
+  .will-change { will-change: contents; }
+  .content-visibility { content-visibility: auto; contain-intrinsic-size: 0 200px; }
 </style>
 </head>
 <body class="min-h-screen font-sans text-zinc-100 antialiased">
@@ -139,6 +149,32 @@ async function fetchT(url, ms) {
   const c = new AbortController();
   const t = setTimeout(() => c.abort(), ms);
   try { return await fetch(url, { signal: c.signal }); } finally { clearTimeout(t); }
+}
+
+/* ============================ CONCURRENCIA LIMITADA ============================ */
+async function ejecutarConConcurrencia(tareas, maxConcurrentes) {
+  let indice = 0;
+  const resultados = new Array(tareas.length);
+  
+  async function worker() {
+    while (indice < tareas.length) {
+      const i = indice++;
+      const tarea = tareas[i];
+      try {
+        const valor = await tarea.fn();
+        resultados[i] = { ok: true, value: valor };
+      } catch (e) {
+        resultados[i] = { ok: false, error: e.message };
+      }
+    }
+  }
+  
+  const workers = [];
+  for (let i = 0; i < Math.min(maxConcurrentes, tareas.length); i++) {
+    workers.push(worker());
+  }
+  await Promise.all(workers);
+  return resultados;
 }
 
 /* ============================ MODELO ELO + POISSON (respaldo) ============================ */
@@ -429,15 +465,23 @@ async function fetchTSD(fecha) {
     urls.push(base + "/eventsnextleague.php?id=" + id);
     urls.push(base + "/eventspastleague.php?id=" + id);
   }
-  const resultados = await Promise.allSettled(urls.map((u) =>
-    fetchT(u, 10000).then((r) => { if (!r.ok) throw new Error("TSD " + r.status); return r.json(); })
-  ));
-  if (resultados.every((r) => r.status === "rejected")) throw new Error("TheSportsDB inaccesible");
+  
+  // Optimización: concurrencia limitada para TSD (máximo 2 requests simultáneas)
+  const tareasTSD = urls.map((u) => ({ 
+    fn: async () => {
+      const r = await fetchT(u, 10000);
+      if (!r.ok) throw new Error("TSD " + r.status);
+      return await r.json();
+    }
+  }));
+  const resultados = await ejecutarConConcurrencia(tareasTSD, 2);
+  
+  if (resultados.every((r) => !r.ok)) throw new Error("TheSportsDB inaccesible");
 
   const vistos = new Set();
   const out = [];
   for (const res of resultados) {
-    if (res.status !== "fulfilled") continue;
+    if (!res.ok) continue;
     for (const e of ((res.value || {}).events || [])) {
       if (!e || vistos.has(e.idEvent)) continue;
       vistos.add(e.idEvent);
@@ -598,15 +642,24 @@ async function cargar(silencioso = false, redetectar = false) {
     $("#nav-fecha").style.visibility = "visible";
     const fecha = state.fechaSel;
     FOREBET_PREDS.clear();
-    const resultados = await Promise.allSettled([
-      fetchPromiedos(fecha), fetchSofascore(fecha), fetchESPN(fecha), fetchTSD(fecha), fetchForebet(fecha)
-    ]);
+    
+    // Optimización: ejecutar fuentes en paralelo con concurrencia limitada
+    const fuentes = [
+      { nombre: "Promiedos", fn: () => fetchPromiedos(fecha), peso: 1 },
+      { nombre: "Sofascore", fn: () => fetchSofascore(fecha), peso: 1 },
+      { nombre: "ESPN", fn: () => fetchESPN(fecha), peso: 1 },
+      { nombre: "TheSportsDB", fn: () => fetchTSD(fecha), peso: 2 },
+      { nombre: "Forebet", fn: () => fetchForebet(fecha), peso: 3 }
+    ];
+    
+    // Ejecutar con concurrencia máxima de 3 para evitar saturación de red
+    const resultados = await ejecutarConConcurrencia(fuentes, 3);
     const nombres = ["Promiedos", "Sofascore", "ESPN", "TheSportsDB", "Forebet"];
     const fuentesOk = [];
     let partidos = [];
     const claves = new Set();
     resultados.forEach((res, i) => {
-      if (res.status !== "fulfilled") return;
+      if (!res.ok) return;
       fuentesOk.push(nombres[i]);
       for (const p of res.value) {
         const clave = p.fecha + "|" + normTeam(p.local) + "|" + normTeam(p.visitante);
@@ -774,7 +827,7 @@ function cardHtml(p, i) {
   const eloV = prob && prob.elo ? '<span class="text-[11px] tabular-nums text-zinc-500">ELO ' + prob.elo.visitante + '</span>' : "";
   const link = p.url ? ' · <a class="text-emerald-400/80 hover:text-emerald-300" href="' + escapeHtml(p.url) + '" target="_blank" rel="noopener">detalle ↗</a>' : "";
 
-  return '<article class="card-anim group rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.07] to-white/[0.02] p-4 transition hover:border-emerald-300/30 hover:shadow-lg hover:shadow-emerald-500/5" style="animation-delay:' + Math.min(i * 35, 400) + 'ms">' +
+  return '<article class="card-anim content-visibility group rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.07] to-white/[0.02] p-4 transition hover:border-emerald-300/30 hover:shadow-lg hover:shadow-emerald-500/5" style="animation-delay:' + Math.min(i * 35, 400) + 'ms">' +
     '<div class="flex items-center justify-between gap-2">' +
       '<span class="rounded-full border px-2.5 py-0.5 text-[11px] font-medium ' + colorLiga + '">' + escapeHtml(p.liga) + '</span>' +
       badgeEstado(p) +
@@ -864,11 +917,32 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && Date.now() - state.ultimaCarga > 30000) cargar(true);
 });
 
-setInterval(() => {
-  const intervalo = state.modo === "api" ? 60000 : 300000;
-  if (Date.now() - state.ultimaCarga >= intervalo) cargar(true);
-}, 20000);
-setInterval(() => { if (!state.cargando) pintarChips(); }, 10000);
+// Optimización: intervalo de refresco ajustado según estado de visibilidad
+let intervaloRefresco;
+function ajustarIntervalo() {
+  if (intervaloRefresco) clearInterval(intervaloRefresco);
+  const base = state.modo === "api" ? 60000 : 300000;
+  // Si la pestaña está oculta, reducir frecuencia a la mitad
+  const factor = document.hidden ? 2 : 1;
+  intervaloRefresco = setInterval(() => {
+    if (!document.hidden && Date.now() - state.ultimaCarga >= base) cargar(true);
+  }, 20000 * factor);
+}
+ajustarIntervalo();
+
+// Optimización: pintar chips solo cuando es necesario
+let intervaloChips;
+function ajustarIntervaloChips() {
+  if (intervaloChips) clearInterval(intervaloChips);
+  intervaloChips = setInterval(() => { 
+    if (!state.cargando && !document.hidden) pintarChips(); 
+  }, document.hidden ? 30000 : 10000);
+}
+ajustarIntervaloChips();
+document.addEventListener("visibilitychange", () => {
+  ajustarIntervalo();
+  ajustarIntervaloChips();
+});
 
 cargar();
 </script>
